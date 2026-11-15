@@ -24,6 +24,8 @@ serde_json = "1.0"
 rusqlite = { version = "0.32", features = ["bundled", "serde_json"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.10", features = ["v4", "serde"] }
+network-interface = "2.0"
+oui = "0.8"
 
 [build-dependencies]
 tauri-build = { version = "2.0.0", features = [] }
