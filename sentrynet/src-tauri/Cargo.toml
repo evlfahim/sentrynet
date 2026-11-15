@@ -1,0 +1,26 @@
+[package]
+name = "sentrynet"
+version = "0.1.0"
+description = "A cross-platform LAN security scanner"
+authors = ["Sentry"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.75"
+
+[lib]
+name = "sentrynet_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "sentrynet"
+path = "src/main.rs"
+
+[dependencies]
+tauri = { version = "2.0.0", features = [] }
+tauri-plugin-shell = "2.0.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0", features = [] }
