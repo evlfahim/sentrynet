@@ -979,10 +979,11 @@ mod tests {
 
         db.remove_device("192.168.1.1").unwrap();
         assert_eq!(db.device_count().unwrap(), 0);
-        // Without FK constraints, related records remain; caller must clean up
+        // Ports are cascade-deleted via FK constraint
+        assert_eq!(db.get_ports("192.168.1.1").unwrap().len(), 0);
+        // History and alerts remain (no FK cascade for those)
         assert_eq!(db.history_count().unwrap(), 1);
         assert_eq!(db.alert_count().unwrap(), 1);
-        assert_eq!(db.get_ports("192.168.1.1").unwrap().len(), 1);
     }
 
     #[test]
