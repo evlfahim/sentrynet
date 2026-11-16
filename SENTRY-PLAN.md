@@ -36,6 +36,6 @@ Node.js, TypeScript, Tauri, SQLite, Nmap
 - [x] 11. Add data export feature to save history and device lists as CSV or JSON files.
 - [x] 12. Write unit tests for scanner modules, API handlers, and database operations.
 - [x] 13. Configure Tauri build scripts and bundle the desktop application for target OS.
-- [ ] 14. Test desktop app functionality, verify local web server access, and validate alert mechanisms.
+- [x] 14. Test desktop app functionality, verify local web server access, and validate alert mechanisms.
 - [ ] 15. Implement history cleanup job to archive or delete old records based on retention policy.
 - [ ] 16. Write README with setup instructions, usage guide, and plugin integration architecture note.
