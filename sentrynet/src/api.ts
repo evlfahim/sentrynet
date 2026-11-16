@@ -64,6 +64,7 @@ export interface AppConfig {
   arp_settle_ms: number;
   port_scan_timeout_ms: number;
   port_scan_concurrency: number;
+  port_scan_ports: string;
   port_service_detection: boolean;
   ping_count: number;
   ping_timeout_ms: number;
@@ -73,6 +74,11 @@ export interface AppConfig {
   check_latency: boolean;
   history_retention_days: number;
   enable_notifications: boolean;
+  auto_scan_interval_seconds: number;
+  alert_rules_new_device: boolean;
+  alert_rules_new_port: boolean;
+  alert_rules_device_offline: boolean;
+  alert_rules_port_closed: boolean;
 }
 
 export interface ScanStats {
@@ -166,6 +172,7 @@ export interface ScanRequest {
   arp_settle_ms?: number;
   port_scan_timeout_ms?: number;
   port_scan_concurrency?: number;
+  port_scan_ports?: string;
   port_service_detection?: boolean;
   ping_count?: number;
   ping_timeout_ms?: number;
@@ -244,6 +251,7 @@ function scanArgs(req: ScanRequest): Record<string, unknown> {
   return {
     portScanTimeoutMs: req.port_scan_timeout_ms ?? null,
     portScanConcurrency: req.port_scan_concurrency ?? null,
+    portScanPorts: req.port_scan_ports ?? null,
     portServiceDetection: req.port_service_detection ?? null,
     pingCount: req.ping_count ?? null,
     pingTimeoutMs: req.ping_timeout_ms ?? null,

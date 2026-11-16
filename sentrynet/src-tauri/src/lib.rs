@@ -124,6 +124,7 @@ async fn full_scan(
         http_path: http_path.unwrap_or_else(|| latency::DEFAULT_HTTP_PATH.to_string()),
         http_timeout_ms: http_timeout_ms.unwrap_or(latency::DEFAULT_HTTP_TIMEOUT_MS),
         check_latency: check_latency.unwrap_or(true),
+        port_scan_ports: String::new(),
     };
     tauri::async_runtime::spawn_blocking(move || {
         let mut db = database::Database::open(&db_path).map_err(|e| core::CoreError::Database(e.to_string()))?;
@@ -164,6 +165,7 @@ async fn scan_single_host(
         http_path: http_path.unwrap_or_else(|| latency::DEFAULT_HTTP_PATH.to_string()),
         http_timeout_ms: http_timeout_ms.unwrap_or(latency::DEFAULT_HTTP_TIMEOUT_MS),
         check_latency: check_latency.unwrap_or(true),
+        port_scan_ports: String::new(),
     };
     tauri::async_runtime::spawn_blocking(move || {
         let mut db = database::Database::open(&db_path).map_err(|e| core::CoreError::Database(e.to_string()))?;

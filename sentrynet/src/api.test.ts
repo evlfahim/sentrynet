@@ -45,6 +45,7 @@ const CONFIG: AppConfig = {
   arp_settle_ms: 1500,
   port_scan_timeout_ms: 1000,
   port_scan_concurrency: 64,
+  port_scan_ports: '',
   port_service_detection: true,
   ping_count: 4,
   ping_timeout_ms: 3000,
@@ -54,6 +55,11 @@ const CONFIG: AppConfig = {
   check_latency: true,
   history_retention_days: 90,
   enable_notifications: true,
+  auto_scan_interval_seconds: 0,
+  alert_rules_new_device: true,
+  alert_rules_new_port: true,
+  alert_rules_device_offline: true,
+  alert_rules_port_closed: true,
 };
 
 function ok<T>(data: T) {
@@ -117,6 +123,7 @@ describe('invoke bindings', () => {
       arpSettleMs: null,
       portScanTimeoutMs: null,
       portScanConcurrency: null,
+      portScanPorts: null,
       portServiceDetection: null,
       pingCount: 2,
       pingTimeoutMs: null,

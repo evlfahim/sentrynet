@@ -412,6 +412,13 @@ td.mono { font-family: var(--mono); font-size: .78rem; }
   accent-color: var(--accent);
 }
 
+.form-hint {
+  font-size: .7rem;
+  color: var(--text-dim);
+  font-style: italic;
+  margin-top: 2px;
+}
+
 /* ── Modal / overlay ────────────────────────── */
 
 .overlay {

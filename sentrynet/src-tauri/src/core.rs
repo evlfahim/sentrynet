@@ -37,6 +37,9 @@ pub struct FullScanOptions {
     /// TCP scan concurrency (default 64).
     pub port_scan_concurrency: usize,
 
+    /// Custom ports to scan (comma-separated). Empty = use defaults.
+    pub port_scan_ports: String,
+
     /// Whether to attempt banner-based service detection (default true).
     pub port_service_detection: bool,
 
@@ -66,6 +69,7 @@ impl Default for FullScanOptions {
             arp_settle_ms: 1500,
             port_scan_timeout_ms: port_scan::DEFAULT_SCAN_TIMEOUT_MS,
             port_scan_concurrency: port_scan::DEFAULT_CONCURRENCY,
+            port_scan_ports: String::new(),
             port_service_detection: true,
             ping_count: latency::DEFAULT_PING_COUNT,
             ping_timeout_ms: latency::DEFAULT_PING_TIMEOUT_MS,
@@ -247,9 +251,18 @@ pub fn full_scan(db: &mut Database, options: &FullScanOptions) -> Result<FullSca
     // ── Step 4: TCP Port Scanning ──────────────────────────────────────
 
     let host_list: Vec<String> = arp_entries.iter().map(|e| e.ip.clone()).collect();
+    let custom_ports: Vec<u16> = if options.port_scan_ports.trim().is_empty() {
+        vec![]
+    } else {
+        options
+            .port_scan_ports
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u16>().ok())
+            .collect()
+    };
     let port_scan_opts = port_scan::TcpScanOptions {
         hosts: host_list.clone(),
-        ports: vec![], // use default well-known ports
+        ports: custom_ports,
         timeout_ms: options.port_scan_timeout_ms,
         concurrency: options.port_scan_concurrency,
         service_detection: options.port_service_detection,
@@ -501,13 +514,18 @@ pub fn scan_single_host(
     let is_new = existing.is_none();
 
     // Port scan
+    let custom_ports: Vec<u16> = if options.port_scan_ports.trim().is_empty() {
+        vec![]
+    } else {
+        options
+            .port_scan_ports
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u16>().ok())
+            .collect()
+    };
     let port_result = port_scan::scan_host(
         host,
-        &if options.port_scan_timeout_ms > 0 {
-            port_scan::DEFAULT_PORTS.to_vec()
-        } else {
-            vec![]
-        },
+        &custom_ports,
         options.port_scan_timeout_ms,
         options.port_scan_concurrency,
         options.port_service_detection,

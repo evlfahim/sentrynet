@@ -147,6 +147,8 @@ pub struct AppConfig {
     pub port_scan_timeout_ms: u64,
     /// TCP scan concurrency.
     pub port_scan_concurrency: usize,
+    /// Custom ports to scan (comma-separated or empty for defaults).
+    pub port_scan_ports: String,
     /// Whether to enable service detection.
     pub port_service_detection: bool,
     /// Number of ICMP ping probes.
@@ -165,6 +167,16 @@ pub struct AppConfig {
     pub history_retention_days: u64,
     /// Whether to enable desktop notifications.
     pub enable_notifications: bool,
+    /// Auto-scan interval in seconds (0 = disabled).
+    pub auto_scan_interval_seconds: u64,
+    /// Alert rule: fire on new device discovery.
+    pub alert_rules_new_device: bool,
+    /// Alert rule: fire on new open port.
+    pub alert_rules_new_port: bool,
+    /// Alert rule: fire when a known device goes offline.
+    pub alert_rules_device_offline: bool,
+    /// Alert rule: fire when an open port closes.
+    pub alert_rules_port_closed: bool,
 }
 
 impl Default for AppConfig {
@@ -174,6 +186,7 @@ impl Default for AppConfig {
             arp_settle_ms: arp::DEFAULT_SETTLE_MS,
             port_scan_timeout_ms: port_scan::DEFAULT_SCAN_TIMEOUT_MS,
             port_scan_concurrency: port_scan::DEFAULT_CONCURRENCY,
+            port_scan_ports: String::new(),
             port_service_detection: true,
             ping_count: latency::DEFAULT_PING_COUNT,
             ping_timeout_ms: latency::DEFAULT_PING_TIMEOUT_MS,
@@ -183,6 +196,11 @@ impl Default for AppConfig {
             check_latency: true,
             history_retention_days: 90,
             enable_notifications: true,
+            auto_scan_interval_seconds: 0,
+            alert_rules_new_device: true,
+            alert_rules_new_port: true,
+            alert_rules_device_offline: true,
+            alert_rules_port_closed: true,
         }
     }
 }
@@ -195,6 +213,7 @@ pub struct ScanRequest {
     pub arp_settle_ms: Option<u64>,
     pub port_scan_timeout_ms: Option<u64>,
     pub port_scan_concurrency: Option<usize>,
+    pub port_scan_ports: Option<String>,
     pub port_service_detection: Option<bool>,
     pub ping_count: Option<u32>,
     pub ping_timeout_ms: Option<u64>,
@@ -216,6 +235,11 @@ impl ScanRequest {
             arp_settle_ms: self.arp_settle_ms.unwrap_or(config.arp_settle_ms),
             port_scan_timeout_ms: self.port_scan_timeout_ms.unwrap_or(config.port_scan_timeout_ms),
             port_scan_concurrency: self.port_scan_concurrency.unwrap_or(config.port_scan_concurrency),
+            port_scan_ports: self
+                .port_scan_ports
+                .clone()
+                .filter(|p| !p.trim().is_empty())
+                .unwrap_or_else(|| config.port_scan_ports.clone()),
             port_service_detection: self
                 .port_service_detection
                 .unwrap_or(config.port_service_detection),
@@ -309,6 +333,7 @@ pub fn read_config_from_db(db: &Database) -> AppConfig {
         arp_settle_ms: parsed(&map, "arp_settle_ms", d.arp_settle_ms),
         port_scan_timeout_ms: parsed(&map, "port_scan_timeout_ms", d.port_scan_timeout_ms),
         port_scan_concurrency: parsed(&map, "port_scan_concurrency", d.port_scan_concurrency),
+        port_scan_ports: map.get("port_scan_ports").cloned().unwrap_or(d.port_scan_ports),
         port_service_detection: parsed(&map, "port_service_detection", d.port_service_detection),
         ping_count: parsed(&map, "ping_count", d.ping_count),
         ping_timeout_ms: parsed(&map, "ping_timeout_ms", d.ping_timeout_ms),
@@ -318,15 +343,21 @@ pub fn read_config_from_db(db: &Database) -> AppConfig {
         check_latency: parsed(&map, "check_latency", d.check_latency),
         history_retention_days: parsed(&map, "history_retention_days", d.history_retention_days),
         enable_notifications: parsed(&map, "enable_notifications", d.enable_notifications),
+        auto_scan_interval_seconds: parsed(&map, "auto_scan_interval_seconds", d.auto_scan_interval_seconds),
+        alert_rules_new_device: parsed(&map, "alert_rules_new_device", d.alert_rules_new_device),
+        alert_rules_new_port: parsed(&map, "alert_rules_new_port", d.alert_rules_new_port),
+        alert_rules_device_offline: parsed(&map, "alert_rules_device_offline", d.alert_rules_device_offline),
+        alert_rules_port_closed: parsed(&map, "alert_rules_port_closed", d.alert_rules_port_closed),
     }
 }
 
 pub fn write_config_to_db(db: &Database, config: &AppConfig) -> Result<(), String> {
-    let pairs: [(&str, String); 13] = [
+    let pairs: [(&str, String); 19] = [
         ("default_cidr", config.default_cidr.clone().unwrap_or_default()),
         ("arp_settle_ms", config.arp_settle_ms.to_string()),
         ("port_scan_timeout_ms", config.port_scan_timeout_ms.to_string()),
         ("port_scan_concurrency", config.port_scan_concurrency.to_string()),
+        ("port_scan_ports", config.port_scan_ports.clone()),
         ("port_service_detection", config.port_service_detection.to_string()),
         ("ping_count", config.ping_count.to_string()),
         ("ping_timeout_ms", config.ping_timeout_ms.to_string()),
@@ -336,6 +367,11 @@ pub fn write_config_to_db(db: &Database, config: &AppConfig) -> Result<(), Strin
         ("check_latency", config.check_latency.to_string()),
         ("history_retention_days", config.history_retention_days.to_string()),
         ("enable_notifications", config.enable_notifications.to_string()),
+        ("auto_scan_interval_seconds", config.auto_scan_interval_seconds.to_string()),
+        ("alert_rules_new_device", config.alert_rules_new_device.to_string()),
+        ("alert_rules_new_port", config.alert_rules_new_port.to_string()),
+        ("alert_rules_device_offline", config.alert_rules_device_offline.to_string()),
+        ("alert_rules_port_closed", config.alert_rules_port_closed.to_string()),
     ];
     let tx = db.conn.unchecked_transaction().map_err(|e| e.to_string())?;
     for (key, value) in pairs.iter() {
@@ -731,6 +767,7 @@ pub async fn api_scan(
     arp_settle_ms: Option<u64>,
     port_scan_timeout_ms: Option<u64>,
     port_scan_concurrency: Option<usize>,
+    port_scan_ports: Option<String>,
     port_service_detection: Option<bool>,
     ping_count: Option<u32>,
     ping_timeout_ms: Option<u64>,
@@ -744,6 +781,7 @@ pub async fn api_scan(
         arp_settle_ms,
         port_scan_timeout_ms,
         port_scan_concurrency,
+        port_scan_ports,
         port_service_detection,
         ping_count,
         ping_timeout_ms,
@@ -762,6 +800,7 @@ pub async fn api_scan_host(
     host: String,
     port_scan_timeout_ms: Option<u64>,
     port_scan_concurrency: Option<usize>,
+    port_scan_ports: Option<String>,
     port_service_detection: Option<bool>,
     ping_count: Option<u32>,
     ping_timeout_ms: Option<u64>,
@@ -775,6 +814,7 @@ pub async fn api_scan_host(
         arp_settle_ms: None,
         port_scan_timeout_ms,
         port_scan_concurrency,
+        port_scan_ports,
         port_service_detection,
         ping_count,
         ping_timeout_ms,
@@ -1100,6 +1140,7 @@ mod tests {
             arp_settle_ms: 2000,
             port_scan_timeout_ms: 5000,
             port_scan_concurrency: 50,
+            port_scan_ports: "22,80,443".to_string(),
             port_service_detection: false,
             ping_count: 5,
             ping_timeout_ms: 3000,
@@ -1109,6 +1150,11 @@ mod tests {
             check_latency: false,
             history_retention_days: 60,
             enable_notifications: false,
+            auto_scan_interval_seconds: 300,
+            alert_rules_new_device: true,
+            alert_rules_new_port: false,
+            alert_rules_device_offline: true,
+            alert_rules_port_closed: false,
         };
         write_config_to_db(&db, &config).unwrap();
         assert_eq!(read_config_from_db(&db), config);

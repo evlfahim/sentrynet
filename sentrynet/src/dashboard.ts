@@ -51,6 +51,7 @@ export interface AppConfig {
   arp_settle_ms: number;
   port_scan_timeout_ms: number;
   port_scan_concurrency: number;
+  port_scan_ports: string;
   port_service_detection: boolean;
   ping_count: number;
   ping_timeout_ms: number;
@@ -60,6 +61,11 @@ export interface AppConfig {
   check_latency: boolean;
   history_retention_days: number;
   enable_notifications: boolean;
+  auto_scan_interval_seconds: number;
+  alert_rules_new_device: boolean;
+  alert_rules_new_port: boolean;
+  alert_rules_device_offline: boolean;
+  alert_rules_port_closed: boolean;
 }
 
 export interface ScanStats {
@@ -719,33 +725,110 @@ async function refreshAlerts() {
 // Settings
 // ──────────────────────────────────────────────
 
+/** Map a config value to the right type for an input element. */
+function fillInput(id: string, value: string | number | boolean) {
+  const el = document.getElementById(id) as HTMLInputElement | null;
+  if (!el) return;
+  if (el.type === 'checkbox') {
+    el.checked = Boolean(value);
+  } else {
+    el.value = String(value);
+  }
+}
+
+/** Read all settings from the form and return a patch object. */
+function readSettingsForm(): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+
+  const cidr = (document.getElementById('cfgCidr') as HTMLInputElement).value.trim();
+  if (cidr) patch.default_cidr = cidr;
+
+  const num = (id: string) => {
+    const el = document.getElementById(id) as HTMLInputElement | null;
+    if (!el) return;
+    const v = parseInt(el.value, 10);
+    if (!isNaN(v)) patch[id.replace('cfg', '').toLowerCase()] = v;
+  };
+  num('ArpSettle');
+  num('PortTimeout');
+  num('PortConcurrency');
+  num('PortList');
+  num('PingCount');
+  num('PingTimeout');
+  num('HttpPort');
+  num('HttpTimeout');
+  num('AutoScan');
+  num('Retention');
+
+  const chk = (id: string) => {
+    const el = document.getElementById(id) as HTMLInputElement | null;
+    if (!el) return;
+    patch[id.replace('cfg', '').toLowerCase()] = el.checked;
+  };
+  chk('SvcDetect');
+  chk('Latency');
+  chk('Notify');
+  chk('AlertNewDevice');
+  chk('AlertNewPort');
+  chk('AlertDeviceOffline');
+  chk('AlertPortClosed');
+
+  // http_path is special — only send if non-empty
+  const httpPath = (document.getElementById('cfgHttpPath') as HTMLInputElement).value.trim();
+  if (httpPath) patch.http_path = httpPath;
+
+  return patch;
+}
+
+/** Auto-scan timer handle. */
+let autoScanTimer: ReturnType<typeof setInterval> | null = null;
+
+function startAutoScan(intervalSeconds: number) {
+  stopAutoScan();
+  if (intervalSeconds <= 0) return;
+  autoScanTimer = setInterval(async () => {
+    if (connected) {
+      try {
+        await runScan();
+      } catch {
+        /* scan errors are shown in the progress bar */
+      }
+    }
+  }, intervalSeconds * 1000);
+}
+
+function stopAutoScan() {
+  if (autoScanTimer) {
+    clearInterval(autoScanTimer);
+    autoScanTimer = null;
+  }
+}
+
 async function loadSettings() {
   try {
     const config = await apiGet<AppConfig>('/api/config');
     notificationsEnabled = config.enable_notifications;
-    const fill =(id: string, val: string | number | boolean) => {
-      const el = document.getElementById(id) as HTMLInputElement | null;
-      if (el) {
-        if (el.type === 'checkbox') {
-          el.checked = Boolean(val);
-        } else {
-          el.value = String(val);
-        }
-      }
-    };
-    fill('cfgCidr', config.default_cidr ?? '');
-    fill('cfgArpSettle', config.arp_settle_ms);
-    fill('cfgPortTimeout', config.port_scan_timeout_ms);
-    fill('cfgPortConcurrency', config.port_scan_concurrency);
-    fill('cfgPingCount', config.ping_count);
-    fill('cfgPingTimeout', config.ping_timeout_ms);
-    fill('cfgHttpPort', config.http_port);
-    fill('cfgHttpPath', config.http_path);
-    fill('cfgHttpTimeout', config.http_timeout_ms);
-    fill('cfgRetention', config.history_retention_days);
-    fill('cfgSvcDetect', config.port_service_detection);
-    fill('cfgLatency', config.check_latency);
-    fill('cfgNotify', config.enable_notifications);
+    fillInput('cfgCidr', config.default_cidr ?? '');
+    fillInput('cfgArpSettle', config.arp_settle_ms);
+    fillInput('cfgPortTimeout', config.port_scan_timeout_ms);
+    fillInput('cfgPortConcurrency', config.port_scan_concurrency);
+    fillInput('cfgPortList', config.port_scan_ports);
+    fillInput('cfgPingCount', config.ping_count);
+    fillInput('cfgPingTimeout', config.ping_timeout_ms);
+    fillInput('cfgHttpPort', config.http_port);
+    fillInput('cfgHttpPath', config.http_path);
+    fillInput('cfgHttpTimeout', config.http_timeout_ms);
+    fillInput('cfgAutoScan', config.auto_scan_interval_seconds);
+    fillInput('cfgRetention', config.history_retention_days);
+    fillInput('cfgSvcDetect', config.port_service_detection);
+    fillInput('cfgLatency', config.check_latency);
+    fillInput('cfgNotify', config.enable_notifications);
+    fillInput('cfgAlertNewDevice', config.alert_rules_new_device);
+    fillInput('cfgAlertNewPort', config.alert_rules_new_port);
+    fillInput('cfgAlertDeviceOffline', config.alert_rules_device_offline);
+    fillInput('cfgAlertPortClosed', config.alert_rules_port_closed);
+
+    startAutoScan(config.auto_scan_interval_seconds);
   } catch (e) {
     console.error('Failed to load settings:', e);
   }
@@ -753,37 +836,15 @@ async function loadSettings() {
 
 async function saveSettings() {
   try {
-    const patch: Record<string, unknown> = {};
-    const cidr = (document.getElementById('cfgCidr') as HTMLInputElement).value.trim();
-    if (cidr) patch.default_cidr = cidr;
-
-    const num = (id: string) => {
-      const v = parseInt((document.getElementById(id) as HTMLInputElement).value, 10);
-      if (!isNaN(v)) patch[id.replace('cfg', '').toLowerCase()] = v;
-    };
-    num('ArpSettle');
-    num('PortTimeout');
-    num('PortConcurrency');
-    num('PingCount');
-    num('PingTimeout');
-    num('HttpPort');
-    num('HttpTimeout');
-    num('Retention');
-
-    const chk = (id: string) => {
-      const v = (document.getElementById(id) as HTMLInputElement).checked;
-      patch[id.replace('cfg', '').toLowerCase()] = v;
-    };
-    chk('SvcDetect');
-    chk('Latency');
-    chk('Notify');
-
-    // http_path is special — only send if non-empty
-    const httpPath = (document.getElementById('cfgHttpPath') as HTMLInputElement).value.trim();
-    if (httpPath) patch.http_path = httpPath;
-
+    const patch = readSettingsForm();
     await apiPut('/api/config', patch);
     showToast('Settings saved', 'success');
+    // Restart auto-scan with the new interval
+    const autoScanVal = parseInt(
+      (document.getElementById('cfgAutoScan') as HTMLInputElement).value,
+      10,
+    );
+    startAutoScan(isNaN(autoScanVal) ? 0 : autoScanVal);
   } catch (e) {
     showToast(`Failed to save: ${(e as Error).message}`, 'error');
   }
