@@ -658,7 +658,7 @@ pub fn handle_export_ports(db: &Database) -> Result<String, ApiError> {
     to_pretty_json(&db.list_open_ports()?)
 }
 
-/// Delete history and acknowledged alerts older than the retention period.
+/// Clean up old history and alerts based on retention policy.
 pub fn handle_cleanup(db: &Database) -> Result<CleanupResult, ApiError> {
     let config = read_config_from_db(db);
     if config.history_retention_days == 0 {
@@ -672,6 +672,11 @@ pub fn handle_cleanup(db: &Database) -> Result<CleanupResult, ApiError> {
         history_deleted: db.delete_old_history(&cutoff)?,
         alerts_deleted: db.delete_old_alerts(&cutoff)?,
     })
+}
+
+/// Get all unacknowledged alerts (for the web dashboard to display via browser notifications).
+pub fn handle_get_unacknowledged_alerts(db: &Database) -> Result<Vec<database::Alert>, ApiError> {
+    Ok(db.get_unacknowledged_alerts()?)
 }
 
 // ──────────────────────────────────────────────

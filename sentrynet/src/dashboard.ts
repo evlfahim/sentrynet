@@ -262,6 +262,62 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'info')
 }
 
 // ──────────────────────────────────────────────
+// Browser notifications (for web dashboard)
+// ──────────────────────────────────────────────
+
+let notificationPermission = 'default';
+
+async function requestNotificationPermission(): Promise<boolean> {
+  if (!('Notification' in window)) return false;
+  if (notificationPermission === 'granted') return true;
+  if (notificationPermission === 'denied') return false;
+  try {
+    notificationPermission = await Notification.requestPermission();
+    return notificationPermission === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+async function sendBrowserNotification(title: string, body: string) {
+  if (!('Notification' in window)) return;
+  if (notificationPermission === 'denied') return;
+  if (notificationPermission !== 'granted') {
+    const granted = await requestNotificationPermission();
+    if (!granted) return;
+  }
+  try {
+    new Notification(title, { body, tag: title, requireInteraction: true });
+  } catch {
+    // Notification failed silently
+  }
+}
+
+async function checkAndNotifyAlerts() {
+  try {
+    const alerts = await apiGet<Alert[]>('/api/alerts?acknowledged=false&limit=50');
+    if (alerts.length > 0) {
+      // Send a browser notification for the most recent alert
+      const latest = alerts[0];
+      const title = alertIcon(latest.alert_type) + ' ' + alertTitle(latest.alert_type);
+      await sendBrowserNotification(title, latest.message);
+    }
+  } catch {
+    // Silently fail — notifications are non-critical
+  }
+}
+
+function alertTitle(type: string): string {
+  switch (type) {
+    case 'new_device': return 'New device discovered';
+    case 'new_port': return 'New port opened';
+    case 'device_offline': return 'Device offline';
+    case 'port_closed': return 'Port closed';
+    default: return 'SentryNet alert';
+  }
+}
+
+// ──────────────────────────────────────────────
 // Tab management
 // ──────────────────────────────────────────────
 
@@ -848,12 +904,16 @@ async function init() {
   if (connected) {
     await refreshAll();
     await loadSettings();
+    // Request notification permission and check for existing alerts
+    await requestNotificationPermission();
+    await checkAndNotifyAlerts();
   }
 
   // Periodic refresh (every 30s)
   setInterval(async () => {
     if (connected) {
       await refreshAlerts();
+      await checkAndNotifyAlerts();
     }
   }, 30000);
 }

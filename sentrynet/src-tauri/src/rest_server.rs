@@ -90,6 +90,7 @@ pub const ROUTES: &[&str] = &[
     "GET /api/export/history?limit=",
     "GET /api/export/ports",
     "POST /api/cleanup",
+    "GET /api/notifications/unacknowledged",
 ];
 
 // ──────────────────────────────────────────────
@@ -539,6 +540,11 @@ pub fn route(req: &HttpRequest, db_path: &str) -> HttpResponse {
             Err(e) => HttpResponse::error(&e),
         },
         ("POST", ["api", "cleanup"]) => with_db(db_path, api::handle_cleanup),
+
+        // ── Notifications ──
+        ("GET", ["api", "notifications", "unacknowledged"]) => {
+            with_db(db_path, |db| api::handle_get_unacknowledged_alerts(db))
+        }
 
         _ => {
             let known_path = ROUTES.iter().any(|r| {
