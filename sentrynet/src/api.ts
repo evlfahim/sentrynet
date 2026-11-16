@@ -366,12 +366,24 @@ export function apiExportDevices(dbPath: string): Promise<string> {
   return call('api_export_devices', { dbPath });
 }
 
+export function apiExportDevicesCsv(dbPath: string): Promise<string> {
+  return call('api_export_devices_csv', { dbPath });
+}
+
 export function apiExportHistory(dbPath: string, limit?: number): Promise<string> {
   return call('api_export_history', { dbPath, limit: limit ?? null });
 }
 
+export function apiExportHistoryCsv(dbPath: string, limit?: number): Promise<string> {
+  return call('api_export_history_csv', { dbPath, limit: limit ?? null });
+}
+
 export function apiExportPorts(dbPath: string): Promise<string> {
   return call('api_export_ports', { dbPath });
+}
+
+export function apiExportPortsCsv(dbPath: string): Promise<string> {
+  return call('api_export_ports_csv', { dbPath });
 }
 
 export function apiCleanup(dbPath: string): Promise<CleanupResult> {
@@ -530,12 +542,24 @@ export class RestClient {
     return this.requestRaw('/api/export/devices');
   }
 
+  exportDevicesCsv(): Promise<string> {
+    return this.requestRaw('/api/export/devices.csv');
+  }
+
   exportHistory(limit?: number): Promise<HistoryRecord[]> {
     return this.requestRaw(`/api/export/history${queryString({ limit })}`);
   }
 
+  exportHistoryCsv(limit?: number): Promise<string> {
+    return this.requestRaw(`/api/export/history.csv${queryString({ limit })}`);
+  }
+
   exportPorts(): Promise<Port[]> {
     return this.requestRaw('/api/export/ports');
+  }
+
+  exportPortsCsv(): Promise<string> {
+    return this.requestRaw('/api/export/ports.csv');
   }
 
   cleanup(): Promise<CleanupResult> {

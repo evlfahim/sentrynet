@@ -903,9 +903,8 @@ function closeExportModal() {
   if (overlay) overlay.style.display = 'none';
 }
 
-async function downloadExport(filename: string, data: unknown) {
-  const json = JSON.stringify(data, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
+async function downloadExport(filename: string, data: string, mimeType: string) {
+  const blob = new Blob([data], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -919,7 +918,17 @@ async function exportDevices() {
   try {
     const devices = await apiGet<Device[]>('/api/export/devices');
     closeExportModal();
-    downloadExport('sentrynet-devices.json', devices);
+    downloadExport('sentrynet-devices.json', JSON.stringify(devices, null, 2), 'application/json');
+  } catch (e) {
+    showToast(`Export failed: ${(e as Error).message}`, 'error');
+  }
+}
+
+async function exportDevicesCsv() {
+  try {
+    const csv = await apiGet<string>('/api/export/devices.csv');
+    closeExportModal();
+    downloadExport('sentrynet-devices.csv', csv, 'text/csv');
   } catch (e) {
     showToast(`Export failed: ${(e as Error).message}`, 'error');
   }
@@ -929,7 +938,17 @@ async function exportPorts() {
   try {
     const ports = await apiGet<Port[]>('/api/export/ports');
     closeExportModal();
-    downloadExport('sentrynet-ports.json', ports);
+    downloadExport('sentrynet-ports.json', JSON.stringify(ports, null, 2), 'application/json');
+  } catch (e) {
+    showToast(`Export failed: ${(e as Error).message}`, 'error');
+  }
+}
+
+async function exportPortsCsv() {
+  try {
+    const csv = await apiGet<string>('/api/export/ports.csv');
+    closeExportModal();
+    downloadExport('sentrynet-ports.csv', csv, 'text/csv');
   } catch (e) {
     showToast(`Export failed: ${(e as Error).message}`, 'error');
   }
@@ -939,7 +958,17 @@ async function exportHistory() {
   try {
     const history = await apiGet<HistoryRecord[]>('/api/export/history?limit=1000');
     closeExportModal();
-    downloadExport('sentrynet-history.json', history);
+    downloadExport('sentrynet-history.json', JSON.stringify(history, null, 2), 'application/json');
+  } catch (e) {
+    showToast(`Export failed: ${(e as Error).message}`, 'error');
+  }
+}
+
+async function exportHistoryCsv() {
+  try {
+    const csv = await apiGet<string>('/api/export/history.csv?limit=1000');
+    closeExportModal();
+    downloadExport('sentrynet-history.csv', csv, 'text/csv');
   } catch (e) {
     showToast(`Export failed: ${(e as Error).message}`, 'error');
   }
@@ -979,8 +1008,11 @@ async function init() {
   document.getElementById('btnExport')?.addEventListener('click', openExportModal);
   document.getElementById('btnCloseExport')?.addEventListener('click', closeExportModal);
   document.getElementById('btnExportDevices')?.addEventListener('click', exportDevices);
+  document.getElementById('btnExportDevicesCsv')?.addEventListener('click', exportDevicesCsv);
   document.getElementById('btnExportPorts')?.addEventListener('click', exportPorts);
+  document.getElementById('btnExportPortsCsv')?.addEventListener('click', exportPortsCsv);
   document.getElementById('btnExportHistory')?.addEventListener('click', exportHistory);
+  document.getElementById('btnExportHistoryCsv')?.addEventListener('click', exportHistoryCsv);
   document.getElementById('btnSaveConfig')?.addEventListener('click', saveSettings);
   document.getElementById('btnResetConfig')?.addEventListener('click', resetSettings);
   document.getElementById('btnCleanup')?.addEventListener('click', runCleanup);

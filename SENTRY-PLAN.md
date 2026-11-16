@@ -33,7 +33,7 @@ Node.js, TypeScript, Tauri, SQLite, Nmap
 - [x] 8. Develop Web UI dashboard with device table, port details, latency graphs, and history timeline.
 - [x] 9. Add alert logic to detect new devices and trigger desktop notifications via Tauri.
 - [x] 10. Create settings page for scan intervals, port lists, notification preferences, and history retention.
-- [ ] 11. Add data export feature to save history and device lists as CSV or JSON files.
+- [x] 11. Add data export feature to save history and device lists as CSV or JSON files.
 - [ ] 12. Write unit tests for scanner modules, API handlers, and database operations.
 - [ ] 13. Configure Tauri build scripts and bundle the desktop application for target OS.
 - [ ] 14. Test desktop app functionality, verify local web server access, and validate alert mechanisms.

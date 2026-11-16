@@ -688,16 +688,92 @@ fn to_pretty_json<T: Serialize>(value: &T) -> Result<String, ApiError> {
     serde_json::to_string_pretty(value).map_err(|e| ApiError::internal(e.to_string()))
 }
 
+// ──────────────────────────────────────────────
+// CSV helpers
+// ──────────────────────────────────────────────
+
+/// Escape a CSV field: wrap in quotes if it contains a comma, quote, or newline.
+fn csv_field(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn devices_to_csv(devices: &[database::Device]) -> String {
+    let mut out = String::new();
+    out.push_str("ip,mac,name,vendor,last_seen,first_seen\n");
+    for d in devices {
+        out.push_str(&format!(
+            "{},{},{},{},{},{}\n",
+            csv_field(&d.ip),
+            csv_field(&d.mac),
+            csv_field(&d.name.as_deref().unwrap_or("")),
+            csv_field(&d.vendor.as_deref().unwrap_or("")),
+            csv_field(&d.last_seen.to_rfc3339()),
+            csv_field(&d.first_seen.to_rfc3339()),
+        ));
+    }
+    out
+}
+
+fn history_to_csv(records: &[database::HistoryRecord]) -> String {
+    let mut out = String::new();
+    out.push_str("device_ip,event_type,details,timestamp\n");
+    for r in records {
+        out.push_str(&format!(
+            "{},{},{},{}\n",
+            csv_field(&r.device_ip),
+            csv_field(&r.event_type),
+            csv_field(&r.details.as_deref().unwrap_or("")),
+            csv_field(&r.timestamp.to_rfc3339()),
+        ));
+    }
+    out
+}
+
+fn ports_to_csv(ports: &[database::Port]) -> String {
+    let mut out = String::new();
+    out.push_str("device_ip,port,protocol,state,service\n");
+    for p in ports {
+        out.push_str(&format!(
+            "{},{},{},{},{}\n",
+            csv_field(&p.device_ip),
+            p.port,
+            csv_field(&p.protocol),
+            csv_field(&p.state),
+            csv_field(&p.service.as_deref().unwrap_or("")),
+        ));
+    }
+    out
+}
+
 pub fn handle_export_devices(db: &Database) -> Result<String, ApiError> {
     to_pretty_json(&db.list_devices()?)
+}
+
+pub fn handle_export_devices_csv(db: &Database) -> Result<String, ApiError> {
+    let devices = db.list_devices()?;
+    Ok(devices_to_csv(&devices))
 }
 
 pub fn handle_export_history(db: &Database, limit: Option<usize>) -> Result<String, ApiError> {
     to_pretty_json(&db.get_recent_history(clamp_limit(limit, DEFAULT_EXPORT_HISTORY_LIMIT))?)
 }
 
+pub fn handle_export_history_csv(db: &Database, limit: Option<usize>) -> Result<String, ApiError> {
+    let records = db.get_recent_history(clamp_limit(limit, DEFAULT_EXPORT_HISTORY_LIMIT))?;
+    Ok(history_to_csv(&records))
+}
+
 pub fn handle_export_ports(db: &Database) -> Result<String, ApiError> {
     to_pretty_json(&db.list_open_ports()?)
+}
+
+pub fn handle_export_ports_csv(db: &Database) -> Result<String, ApiError> {
+    let ports = db.list_open_ports()?;
+    Ok(ports_to_csv(&ports))
 }
 
 /// Clean up old history and alerts based on retention policy.
@@ -965,6 +1041,12 @@ pub async fn api_export_devices(db_path: String) -> Result<ApiResponse<String>, 
     run_blocking(move || handle_export_devices(&open_db(&db_path)?)).await
 }
 
+/// Export device list as CSV.
+#[tauri::command]
+pub async fn api_export_devices_csv(db_path: String) -> Result<ApiResponse<String>, String> {
+    run_blocking(move || handle_export_devices_csv(&open_db(&db_path)?)).await
+}
+
 /// Export history as JSON.
 #[tauri::command]
 pub async fn api_export_history(
@@ -974,10 +1056,25 @@ pub async fn api_export_history(
     run_blocking(move || handle_export_history(&open_db(&db_path)?, limit)).await
 }
 
+/// Export history as CSV.
+#[tauri::command]
+pub async fn api_export_history_csv(
+    db_path: String,
+    limit: Option<usize>,
+) -> Result<ApiResponse<String>, String> {
+    run_blocking(move || handle_export_history_csv(&open_db(&db_path)?, limit)).await
+}
+
 /// Export open ports as JSON.
 #[tauri::command]
 pub async fn api_export_ports(db_path: String) -> Result<ApiResponse<String>, String> {
     run_blocking(move || handle_export_ports(&open_db(&db_path)?)).await
+}
+
+/// Export open ports as CSV.
+#[tauri::command]
+pub async fn api_export_ports_csv(db_path: String) -> Result<ApiResponse<String>, String> {
+    run_blocking(move || handle_export_ports_csv(&open_db(&db_path)?)).await
 }
 
 /// Clean up old history and alerts based on retention policy.
@@ -1469,5 +1566,173 @@ mod tests {
         assert_eq!(db.device_count().unwrap(), 0);
         drop(db);
         let _ = std::fs::remove_file(&path);
+    }
+
+    // ── CSV export ─────────────────────────────
+
+    #[test]
+    fn test_export_devices_csv_header() {
+        let db = make_test_db();
+        let csv = handle_export_devices_csv(&db).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines[0], "ip,mac,name,vendor,last_seen,first_seen");
+    }
+
+    #[test]
+    fn test_export_devices_csv_content() {
+        let db = make_test_db();
+        db.upsert_device(&make_device("192.168.1.1", "AA:BB:CC:DD:EE:01")).unwrap();
+        db.upsert_device(&make_device("192.168.1.2", "AA:BB:CC:DD:EE:02")).unwrap();
+        let csv = handle_export_devices_csv(&db).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 3); // header + 2 devices
+        // Both IPs must be present (order may vary due to same timestamp)
+        assert!(csv.contains("192.168.1.1"));
+        assert!(csv.contains("AA:BB:CC:DD:EE:01"));
+        assert!(csv.contains("192.168.1.2"));
+        assert!(csv.contains("AA:BB:CC:DD:EE:02"));
+    }
+
+    #[test]
+    fn test_export_devices_csv_empty() {
+        let db = make_test_db();
+        let csv = handle_export_devices_csv(&db).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 1); // only header
+        assert_eq!(lines[0], "ip,mac,name,vendor,last_seen,first_seen");
+    }
+
+    #[test]
+    fn test_export_history_csv_header() {
+        let db = make_test_db();
+        let csv = handle_export_history_csv(&db, None).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines[0], "device_ip,event_type,details,timestamp");
+    }
+
+    #[test]
+    fn test_export_history_csv_content() {
+        let db = make_test_db();
+        db.append_history(&make_history("192.168.1.1", "discovered")).unwrap();
+        db.append_history(&make_history("192.168.1.1", "port_added")).unwrap();
+        let csv = handle_export_history_csv(&db, None).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 3); // header + 2 records
+        // Both event types must be present (order may vary due to same timestamp)
+        assert!(csv.contains("discovered"));
+        assert!(csv.contains("port_added"));
+    }
+
+    #[test]
+    fn test_export_history_csv_empty() {
+        let db = make_test_db();
+        let csv = handle_export_history_csv(&db, None).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 1); // only header
+    }
+
+    #[test]
+    fn test_export_ports_csv_header() {
+        let db = make_test_db();
+        let csv = handle_export_ports_csv(&db).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines[0], "device_ip,port,protocol,state,service");
+    }
+
+    #[test]
+    fn test_export_ports_csv_content() {
+        let db = make_test_db();
+        // Port has a FK to devices, so create the device first
+        db.upsert_device(&make_device("192.168.1.1", "AA:BB:CC:DD:EE:01")).unwrap();
+        db.upsert_port(&make_port("192.168.1.1", 22, "ssh"), &Utc::now().to_rfc3339())
+            .unwrap();
+        let csv = handle_export_ports_csv(&db).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 2); // header + 1 port
+        assert!(csv.contains("192.168.1.1"));
+        assert!(csv.contains("22"));
+        assert!(csv.contains("ssh"));
+    }
+
+    #[test]
+    fn test_export_ports_csv_empty() {
+        let db = make_test_db();
+        let csv = handle_export_ports_csv(&db).unwrap();
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 1); // only header
+    }
+
+    #[test]
+    fn test_csv_field_escaping() {
+        // Fields with commas should be quoted
+        assert_eq!(csv_field("hello, world"), "\"hello, world\"");
+        // Fields with quotes should be doubled
+        assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+        // Simple fields pass through
+        assert_eq!(csv_field("simple"), "simple");
+    }
+
+    #[test]
+    fn test_devices_to_csv() {
+        let devices = vec![
+            database::Device {
+                ip: "192.168.1.1".to_string(),
+                mac: "AA:BB:CC:DD:EE:01".to_string(),
+                name: Some("My PC".to_string()),
+                vendor: Some("Dell".to_string()),
+                last_seen: Utc::now(),
+                first_seen: Utc::now() - Duration::hours(1),
+            },
+            database::Device {
+                ip: "192.168.1.2".to_string(),
+                mac: "AA:BB:CC:DD:EE:02".to_string(),
+                name: None,
+                vendor: None,
+                last_seen: Utc::now(),
+                first_seen: Utc::now() - Duration::hours(2),
+            },
+        ];
+        let csv = devices_to_csv(&devices);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[1].contains("My PC"));
+        assert!(lines[1].contains("Dell"));
+        assert!(lines[2].contains("192.168.1.2"));
+    }
+
+    #[test]
+    fn test_history_to_csv() {
+        let records = vec![
+            database::HistoryRecord {
+                id: None,
+                device_ip: "192.168.1.1".to_string(),
+                event_type: "discovered".to_string(),
+                details: Some("New device on network".to_string()),
+                timestamp: Utc::now(),
+            },
+        ];
+        let csv = history_to_csv(&records);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("discovered"));
+        assert!(lines[1].contains("New device on network"));
+    }
+
+    #[test]
+    fn test_ports_to_csv() {
+        let ports = vec![
+            database::Port {
+                device_ip: "192.168.1.1".to_string(),
+                port: 22,
+                protocol: "tcp".to_string(),
+                state: "open".to_string(),
+                service: Some("ssh".to_string()),
+            },
+        ];
+        let csv = ports_to_csv(&ports);
+        let lines: Vec<&str> = csv.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("22"));
+        assert!(lines[1].contains("ssh"));
     }
 }

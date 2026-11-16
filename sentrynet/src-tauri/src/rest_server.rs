@@ -87,8 +87,11 @@ pub const ROUTES: &[&str] = &[
     "PUT /api/config",
     "GET /api/stats",
     "GET /api/export/devices",
+    "GET /api/export/devices.csv",
     "GET /api/export/history?limit=",
+    "GET /api/export/history.csv",
     "GET /api/export/ports",
+    "GET /api/export/ports.csv",
     "POST /api/cleanup",
     "GET /api/notifications/unacknowledged",
     "POST /api/notifications/resend",
@@ -532,12 +535,24 @@ pub fn route(req: &HttpRequest, db_path: &str) -> HttpResponse {
         ("GET", ["api", "export", "devices"]) => {
             export(db_path, "sentrynet-devices.json", api::handle_export_devices)
         }
+        ("GET", ["api", "export", "devices.csv"]) => {
+            export(db_path, "sentrynet-devices.csv", api::handle_export_devices_csv)
+        }
         ("GET", ["api", "export", "ports"]) => {
             export(db_path, "sentrynet-ports.json", api::handle_export_ports)
+        }
+        ("GET", ["api", "export", "ports.csv"]) => {
+            export(db_path, "sentrynet-ports.csv", api::handle_export_ports_csv)
         }
         ("GET", ["api", "export", "history"]) => match query_usize(req, "limit") {
             Ok(limit) => export(db_path, "sentrynet-history.json", |db| {
                 api::handle_export_history(db, limit)
+            }),
+            Err(e) => HttpResponse::error(&e),
+        },
+        ("GET", ["api", "export", "history.csv"]) => match query_usize(req, "limit") {
+            Ok(limit) => export(db_path, "sentrynet-history.csv", |db| {
+                api::handle_export_history_csv(db, limit)
             }),
             Err(e) => HttpResponse::error(&e),
         },
@@ -983,6 +998,35 @@ mod tests {
 
         let resp = route(&request("POST", "/api/cleanup", ""), tmp.path());
         assert_eq!(resp.body_json().unwrap()["data"]["history_deleted"], 0);
+    }
+
+    #[test]
+    fn test_route_csv_export() {
+        let tmp = TempDb::new("csv");
+        seed(&tmp.db());
+
+        // Devices CSV
+        let resp = route(&request("GET", "/api/export/devices.csv", ""), tmp.path());
+        assert_eq!(resp.status, 200);
+        assert!(resp.headers.iter().any(|(k, _)| k == "Content-Disposition"));
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(body.starts_with("ip,mac,name,vendor,last_seen,first_seen\n"));
+        assert!(body.contains("192.168.1.10"));
+
+        // Ports CSV
+        let resp = route(&request("GET", "/api/export/ports.csv", ""), tmp.path());
+        assert_eq!(resp.status, 200);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(body.starts_with("device_ip,port,protocol,state,service\n"));
+        assert!(body.contains("22"));
+        assert!(body.contains("ssh"));
+
+        // History CSV
+        let resp = route(&request("GET", "/api/export/history.csv", ""), tmp.path());
+        assert_eq!(resp.status, 200);
+        let body = String::from_utf8_lossy(&resp.body);
+        assert!(body.starts_with("device_ip,event_type,details,timestamp\n"));
+        assert!(body.contains("discovered"));
     }
 
     #[test]
