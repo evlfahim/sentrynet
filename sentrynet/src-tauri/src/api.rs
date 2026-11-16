@@ -8,6 +8,7 @@
 //! * The local HTTP server in [`crate::rest_server`], which maps the same
 //!   handlers to `/api/...` routes for the web dashboard.
 
+use crate::alerts;
 use crate::arp;
 use crate::core;
 use crate::database::{self, Database};
@@ -440,11 +441,16 @@ pub fn acquire_scan_lock() -> Result<MutexGuard<'static, ()>, ApiError> {
 }
 
 /// Full network scan (ARP + ports + latency), persisted to the database.
+///
+/// Alerts raised by the scan (new devices, new ports) are passed to
+/// [`alerts::notify_alerts`], which shows desktop notifications when enabled.
 pub fn handle_scan(db: &mut Database, req: &ScanRequest) -> Result<core::FullScanResult, ApiError> {
     let options = req.to_options(&read_config_from_db(db));
     validate_scan_options(&options)?;
     let _guard = acquire_scan_lock()?;
-    core::full_scan(db, &options).map_err(|e| ApiError::internal(e.to_string()))
+    let result = core::full_scan(db, &options).map_err(|e| ApiError::internal(e.to_string()))?;
+    alerts::notify_alerts(db, &result.alerts);
+    Ok(result)
 }
 
 /// Port scan + latency check of one host, persisted to the database.
@@ -677,6 +683,22 @@ pub fn handle_cleanup(db: &Database) -> Result<CleanupResult, ApiError> {
 /// Get all unacknowledged alerts (for the web dashboard to display via browser notifications).
 pub fn handle_get_unacknowledged_alerts(db: &Database) -> Result<Vec<database::Alert>, ApiError> {
     Ok(db.get_unacknowledged_alerts()?)
+}
+
+/// Re-send desktop notifications for all unacknowledged alerts.
+pub fn handle_notify_pending(db: &Database) -> Result<alerts::NotifyOutcome, ApiError> {
+    Ok(alerts::notify_unacknowledged(db)?)
+}
+
+/// Show a test desktop notification (honours `enable_notifications`).
+pub fn handle_test_notification(db: &Database) -> Result<alerts::NotifyOutcome, ApiError> {
+    Ok(alerts::notify_one(
+        db,
+        &alerts::Notification {
+            title: "SentryNet".to_string(),
+            body: "Desktop notifications are working.".to_string(),
+        },
+    ))
 }
 
 // ──────────────────────────────────────────────
@@ -922,6 +944,18 @@ pub async fn api_export_ports(db_path: String) -> Result<ApiResponse<String>, St
 #[tauri::command]
 pub async fn api_cleanup(db_path: String) -> Result<ApiResponse<CleanupResult>, String> {
     run_blocking(move || handle_cleanup(&open_db(&db_path)?)).await
+}
+
+/// Re-send desktop notifications for all unacknowledged alerts.
+#[tauri::command]
+pub async fn api_notify_pending_alerts(db_path: String) -> Result<ApiResponse<alerts::NotifyOutcome>, String> {
+    run_blocking(move || handle_notify_pending(&open_db(&db_path)?)).await
+}
+
+/// Show a test desktop notification.
+#[tauri::command]
+pub async fn api_test_notification(db_path: String) -> Result<ApiResponse<alerts::NotifyOutcome>, String> {
+    run_blocking(move || handle_test_notification(&open_db(&db_path)?)).await
 }
 
 // ──────────────────────────────────────────────

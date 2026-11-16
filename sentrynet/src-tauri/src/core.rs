@@ -7,6 +7,7 @@
 //! 4. Database persistence (devices, ports, history, alerts)
 //! 5. Alert generation for new devices and port changes
 
+use crate::alerts;
 use crate::arp;
 use crate::database::{Alert, Database, Device, HistoryRecord, Port};
 use crate::latency;
@@ -186,60 +187,62 @@ pub fn full_scan(db: &mut Database, options: &FullScanOptions) -> Result<FullSca
         });
     }
 
-    // ── Step 2: Upsert devices into the database ───────────────────────
+    // ── Step 2: Detect new devices (before the database is updated) ────
+    //
+    // This must run before the upsert below, otherwise every device would
+    // already be "known" by the time we look it up.
 
     let now = Utc::now();
-    let mut devices: Vec<Device> = Vec::with_capacity(arp_entries.len());
-    let mut device_ips: HashSet<String> = HashSet::new();
-
-    for entry in &arp_entries {
-        let device = entry.to_device(now);
-        devices.push(device.clone());
-        device_ips.insert(device.ip.clone());
-    }
-
-    // Batch upsert devices
-    db.upsert_devices_batch(&devices)
-        .map_err(|e| CoreError::Database(e.to_string()))?;
-
-    // ── Step 3: Detect new devices and record history ──────────────────
-
     let mut new_device_ips: Vec<String> = Vec::new();
+    let mut device_alerts: Vec<Alert> = Vec::new();
     let mut history_records: Vec<HistoryRecord> = Vec::new();
 
     for entry in &arp_entries {
         let device_ip = &entry.ip;
         let existing = db.get_device(device_ip).map_err(|e| CoreError::Database(e.to_string()))?;
+        let status = alerts::classify_device(existing.as_ref(), &entry.mac);
 
-        if existing.is_none() {
-            // New device
-            new_device_ips.push(device_ip.clone());
-            history_records.push(HistoryRecord {
-                id: None,
-                device_ip: device_ip.clone(),
-                event_type: "discovered".to_string(),
-                details: Some(format!(
+        let (event_type, details) = match &status {
+            alerts::DeviceStatus::New => (
+                "discovered",
+                format!(
                     "New device discovered: {} ({}) {}",
                     device_ip,
                     entry.mac,
                     entry.vendor.as_deref().unwrap_or("unknown")
-                )),
-                timestamp: now,
-            });
-        } else {
-            // Existing device — record "seen" event
-            history_records.push(HistoryRecord {
-                id: None,
-                device_ip: device_ip.clone(),
-                event_type: "seen".to_string(),
-                details: Some(format!(
-                    "Device seen again: {} ({})",
-                    device_ip, entry.mac
-                )),
-                timestamp: now,
-            });
+                ),
+            ),
+            alerts::DeviceStatus::MacChanged(previous) => (
+                "mac_changed",
+                format!(
+                    "MAC address changed: {} ({} → {})",
+                    device_ip, previous, entry.mac
+                ),
+            ),
+            alerts::DeviceStatus::Known => (
+                "seen",
+                format!("Device seen again: {} ({})", device_ip, entry.mac),
+            ),
+        };
+        history_records.push(HistoryRecord {
+            id: None,
+            device_ip: device_ip.clone(),
+            event_type: event_type.to_string(),
+            details: Some(details),
+            timestamp: now,
+        });
+
+        if let Some(alert) = alerts::new_device_alert(entry, &status, now) {
+            new_device_ips.push(device_ip.clone());
+            device_alerts.push(alert);
         }
     }
+
+    // ── Step 3: Upsert devices into the database ───────────────────────
+
+    let devices: Vec<Device> = arp_entries.iter().map(|entry| entry.to_device(now)).collect();
+    db.upsert_devices_batch(&devices)
+        .map_err(|e| CoreError::Database(e.to_string()))?;
 
     // ── Step 4: TCP Port Scanning ──────────────────────────────────────
 
@@ -316,11 +319,16 @@ pub fn full_scan(db: &mut Database, options: &FullScanOptions) -> Result<FullSca
                     timestamp: now,
                 });
 
-                // Generate alert for new port on any device
+                // Alert on new ports of known devices. A brand-new device's
+                // ports are covered by its new_device alert, so skip them to
+                // avoid a burst of duplicate notifications.
+                if existing_ports.is_empty() && new_device_ips.contains(host_ip) {
+                    continue;
+                }
                 port_alerts.push(Alert {
                     id: None,
                     device_ip: host_ip.clone(),
-                    alert_type: "new_port".to_string(),
+                    alert_type: alerts::ALERT_NEW_PORT.to_string(),
                     message: format!(
                         "New open port discovered on {}: {}/{} ({})",
                         host_ip,
@@ -388,21 +396,9 @@ pub fn full_scan(db: &mut Database, options: &FullScanOptions) -> Result<FullSca
         vec![]
     };
 
-    // ── Step 7: Generate alerts for new devices ────────────────────────
-
-    let mut device_alerts: Vec<Alert> = Vec::new();
-    for ip in &new_device_ips {
-        device_alerts.push(Alert {
-            id: None,
-            device_ip: ip.clone(),
-            alert_type: "new_device".to_string(),
-            message: format!("New device discovered on the network: {ip}"),
-            acknowledged: false,
-            created_at: now,
-        });
-    }
-
-    // ── Step 8: Persist history and alerts ─────────────────────────────
+    // ── Step 7: Persist history and alerts ─────────────────────────────
+    // (new-device alerts were built in step 2; notifications are sent by
+    // the caller via `alerts::notify_alerts` once the scan has finished)
 
     let mut all_history: Vec<HistoryRecord> = Vec::new();
     for record in history_records {

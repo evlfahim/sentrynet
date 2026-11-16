@@ -6,6 +6,8 @@
  * timeline, alerts, and settings.
  */
 
+import { isTauriRuntime, maxAlertId, newAlertsSince, planNotifications } from './alerts';
+
 // ──────────────────────────────────────────────
 // Types (mirror src-tauri/src/api.rs)
 // ──────────────────────────────────────────────
@@ -264,11 +266,40 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'info')
 // ──────────────────────────────────────────────
 // Browser notifications (for web dashboard)
 // ──────────────────────────────────────────────
+//
+// Inside the Tauri window the Rust backend already shows desktop
+// notifications for every scan alert, so browser notifications are only used
+// when the dashboard is opened in a regular browser.
 
 let notificationPermission = 'default';
+/** Mirrors `enable_notifications` from the stored config. */
+let notificationsEnabled = true;
+/** Highest alert id already notified (or present when the page loaded). */
+let lastNotifiedAlertId: number | null = null;
+
+const LAST_ALERT_KEY = 'sentrynet.lastNotifiedAlertId';
+
+function browserNotificationsWanted(): boolean {
+  return notificationsEnabled && !isTauriRuntime() && 'Notification' in window;
+}
+
+function loadLastNotifiedAlertId(): number | null {
+  try {
+    const raw = window.localStorage.getItem(LAST_ALERT_KEY);
+    const id = raw === null ? NaN : Number(raw);
+    return Number.isFinite(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLastNotifiedAlertId(id: number) {
+  lastNotifiedAlertId = id;
+  try { window.localStorage.setItem(LAST_ALERT_KEY, String(id)); } catch { /* storage unavailable */ }
+}
 
 async function requestNotificationPermission(): Promise<boolean> {
-  if (!('Notification' in window)) return false;
+  if (!browserNotificationsWanted()) return false;
   if (notificationPermission === 'granted') return true;
   if (notificationPermission === 'denied') return false;
   try {
@@ -287,33 +318,39 @@ async function sendBrowserNotification(title: string, body: string) {
     if (!granted) return;
   }
   try {
-    new Notification(title, { body, tag: title, requireInteraction: true });
+    new Notification(title, { body, tag: `${title}|${body}`, requireInteraction: true });
   } catch {
     // Notification failed silently
   }
 }
 
+/**
+ * Notify about alerts created since the last check. On the first check of a
+ * fresh browser the existing alerts only set the baseline, so reloading the
+ * page never replays old alerts.
+ */
 async function checkAndNotifyAlerts() {
   try {
-    const alerts = await apiGet<Alert[]>('/api/alerts?acknowledged=false&limit=50');
-    if (alerts.length > 0) {
-      // Send a browser notification for the most recent alert
-      const latest = alerts[0];
-      const title = alertIcon(latest.alert_type) + ' ' + alertTitle(latest.alert_type);
-      await sendBrowserNotification(title, latest.message);
+    const alerts = await apiGet<Alert[]>('/api/alerts?acknowledged=false&limit=100');
+    if (lastNotifiedAlertId === null) lastNotifiedAlertId = loadLastNotifiedAlertId();
+    if (lastNotifiedAlertId === null) {
+      saveLastNotifiedAlertId(maxAlertId(alerts));
+      return;
+    }
+    const fresh = newAlertsSince(alerts, lastNotifiedAlertId);
+    if (fresh.length === 0) return;
+    saveLastNotifiedAlertId(maxAlertId(fresh));
+
+    // Always surface new alerts in the page itself.
+    const newDevices = fresh.filter(a => a.alert_type === 'new_device').length;
+    if (newDevices > 0) showToast(`${alertIcon('new_device')} ${newDevices} new device(s) on the network`, 'info');
+
+    if (!browserNotificationsWanted()) return;
+    for (const n of planNotifications(fresh)) {
+      await sendBrowserNotification(n.title, n.body);
     }
   } catch {
     // Silently fail — notifications are non-critical
-  }
-}
-
-function alertTitle(type: string): string {
-  switch (type) {
-    case 'new_device': return 'New device discovered';
-    case 'new_port': return 'New port opened';
-    case 'device_offline': return 'Device offline';
-    case 'port_closed': return 'Port closed';
-    default: return 'SentryNet alert';
   }
 }
 
@@ -629,11 +666,11 @@ async function runScan() {
     // Refresh all data
     refreshAll(result);
 
-    if (result.new_device_count > 0) {
-      showToast(`Discovered ${result.new_device_count} new device(s)!`, 'success');
-    }
     if (result.alert_count > 0) {
       refreshAlerts();
+      // Toast + browser notification for the alerts this scan raised
+      // (the desktop app's backend has already shown OS notifications).
+      await checkAndNotifyAlerts();
     }
   } catch (e) {
     status.textContent = `Scan failed: ${(e as Error).message}`;
@@ -685,7 +722,8 @@ async function refreshAlerts() {
 async function loadSettings() {
   try {
     const config = await apiGet<AppConfig>('/api/config');
-    const fill = (id: string, val: string | number | boolean) => {
+    notificationsEnabled = config.enable_notifications;
+    const fill =(id: string, val: string | number | boolean) => {
       const el = document.getElementById(id) as HTMLInputElement | null;
       if (el) {
         if (el.type === 'checkbox') {

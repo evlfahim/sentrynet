@@ -88,6 +88,15 @@ export interface CleanupResult {
   alerts_deleted: number;
 }
 
+/** Result of handing alerts to the desktop notifier. */
+export interface NotifyOutcome {
+  sent: number;
+  failed: number;
+  /** True when nothing was attempted (disabled, no notifier, no alerts). */
+  skipped: boolean;
+  reason: string | null;
+}
+
 export interface ApiServerInfo {
   /** Database file used by the app; pass it as `dbPath` to the invoke functions. */
   db_path: string;
@@ -361,6 +370,16 @@ export function apiCleanup(dbPath: string): Promise<CleanupResult> {
   return call('api_cleanup', { dbPath });
 }
 
+/** Re-send desktop notifications for all unacknowledged alerts. */
+export function apiNotifyPendingAlerts(dbPath: string): Promise<NotifyOutcome> {
+  return call('api_notify_pending_alerts', { dbPath });
+}
+
+/** Show a test desktop notification. */
+export function apiTestNotification(dbPath: string): Promise<NotifyOutcome> {
+  return call('api_test_notification', { dbPath });
+}
+
 // ──────────────────────────────────────────────
 // HTTP client (web dashboard)
 // ──────────────────────────────────────────────
@@ -513,5 +532,15 @@ export class RestClient {
 
   cleanup(): Promise<CleanupResult> {
     return this.request('POST', '/api/cleanup');
+  }
+
+  /** Re-send desktop notifications for all unacknowledged alerts. */
+  resendNotifications(): Promise<NotifyOutcome> {
+    return this.request('POST', '/api/notifications/resend');
+  }
+
+  /** Show a test desktop notification. */
+  testNotification(): Promise<NotifyOutcome> {
+    return this.request('POST', '/api/notifications/test');
   }
 }
