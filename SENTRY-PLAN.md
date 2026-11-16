@@ -25,7 +25,7 @@ Node.js, TypeScript, Tauri, SQLite, Nmap
 ## Steps
 - [x] 1. Initialize Tauri project with TypeScript, install dependencies (sqlite3, nmap, axios), and run initial test suite to verify build environment.
 - [x] 2. Create SQLite schema for devices, ports, history, and alerts with indexes for efficient querying.
-- [ ] 3. Implement ARP scan function to discover active IPs, MAC addresses, and vendor names.
+- [x] 3. Implement ARP scan function to discover active IPs, MAC addresses, and vendor names.
 - [ ] 4. Implement TCP port scanner using Nmap or raw sockets to detect open ports and services.
 - [ ] 5. Implement latency checker using ICMP ping and HTTP HEAD requests for response times.
 - [ ] 6. Combine modules into a core scanner service that aggregates device data and updates the database.
