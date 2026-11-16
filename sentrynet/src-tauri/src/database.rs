@@ -6,6 +6,7 @@
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result, Row};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 
 // ──────────────────────────────────────────────
@@ -129,6 +130,12 @@ CREATE INDEX IF NOT EXISTS idx_alerts_type ON alerts(alert_type);
 CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_device_timestamp ON history(device_ip, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_alerts_device ON alerts(device_ip);
+
+-- Configuration table: key-value store for app settings
+CREATE TABLE IF NOT EXISTS config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 "#
 }
 
@@ -138,7 +145,7 @@ CREATE INDEX IF NOT EXISTS idx_alerts_device ON alerts(device_ip);
 
 /// Opaque handle to the SQLite connection.
 pub struct Database {
-    conn: Connection,
+    pub conn: Connection,
 }
 
 impl Database {
@@ -468,6 +475,69 @@ impl Database {
         )?;
         Ok(())
     }
+
+    // ──────────────────────────────────────────
+    // Configuration CRUD
+    // ──────────────────────────────────────────
+
+    /// Get a config value by key.
+    pub fn get_config_value(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT value FROM config WHERE key = ?1",
+        )?;
+        match stmt.query_row(params![key], |row| row.get(0)) {
+            Ok(value) => Ok(Some(value)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Set a config value.
+    pub fn set_config_value(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Read all config keys into a HashMap.
+    pub fn read_all_config(&self) -> Result<HashMap<String, String>> {
+        let mut stmt = self.conn.prepare("SELECT key, value FROM config")?;
+        let rows = stmt.query_map(params![], |row| {
+            let key: String = row.get(0)?;
+            let value: String = row.get(1)?;
+            Ok((key, value))
+        })?;
+        let mut map = HashMap::new();
+        for row in rows {
+            let (k, v) = row?;
+            map.insert(k, v);
+        }
+        Ok(map)
+    }
+
+    /// Get the full application configuration as JSON string.
+    pub fn get_config_json(&self) -> Result<String> {
+        let map = self.read_all_config()?;
+        serde_json::to_string(&map).map_err(|_| rusqlite::Error::QueryReturnedNoRows)
+    }
+
+    /// Update the full application configuration from a JSON string.
+    pub fn update_config_json(&self, json: &str) -> Result<()> {
+        let map: HashMap<String, String> = serde_json::from_str(json)
+            .map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
+        for (key, value) in &map {
+            self.set_config_value(key, value)?;
+        }
+        Ok(())
+    }
+
+    /// Get the full application configuration as a deserializable value.
+    pub fn get_config_all(&self) -> Result<serde_json::Value> {
+        let map = self.read_all_config()?;
+        serde_json::to_value(&map).map_err(|_| rusqlite::Error::QueryReturnedNoRows)
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -513,7 +583,7 @@ impl Database {
         })
     }
 
-    fn row_to_alert(row: &Row) -> Result<Alert> {
+    pub fn row_to_alert(row: &Row) -> Result<Alert> {
         Ok(Alert {
             id: row.get("id")?,
             device_ip: row.get("device_ip")?,
