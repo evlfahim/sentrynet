@@ -4,6 +4,7 @@ pub use tauri;
 pub mod alerts;
 pub mod api;
 pub mod arp;
+pub mod cleanup;
 pub mod core;
 pub mod database;
 pub mod latency;
@@ -219,6 +220,11 @@ fn start_api(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Start the cleanup scheduler. Read the interval from config (default 0 = disabled).
+    let db_for_interval = database::Database::open(&db_path)?;
+    let config = api::read_config_from_db(&db_for_interval);
+    let cleanup_scheduler = cleanup::CleanupScheduler::start(db_path.clone(), config.cleanup_interval_seconds);
+
     app.manage(api::ApiServerState {
         info: api::ApiServerInfo {
             db_path,
@@ -226,6 +232,7 @@ fn start_api(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             rest_error,
         },
         server,
+        cleanup_scheduler: Some(cleanup_scheduler),
     });
     Ok(())
 }
@@ -270,6 +277,7 @@ pub fn run() {
             api::api_export_ports,
             api::api_export_ports_csv,
             api::api_cleanup,
+            api::api_cleanup_status,
             api::api_notify_pending_alerts,
             api::api_test_notification,
         ])

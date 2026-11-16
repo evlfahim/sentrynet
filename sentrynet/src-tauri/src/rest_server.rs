@@ -93,6 +93,7 @@ pub const ROUTES: &[&str] = &[
     "GET /api/export/ports",
     "GET /api/export/ports.csv",
     "POST /api/cleanup",
+    "GET /api/cleanup/status",
     "GET /api/notifications/unacknowledged",
     "POST /api/notifications/resend",
     "POST /api/notifications/test",
@@ -557,6 +558,7 @@ pub fn route(req: &HttpRequest, db_path: &str) -> HttpResponse {
             Err(e) => HttpResponse::error(&e),
         },
         ("POST", ["api", "cleanup"]) => with_db(db_path, api::handle_cleanup),
+        ("GET", ["api", "cleanup", "status"]) => with_db(db_path, |db| api::handle_cleanup_status(db, true)),
 
         // ── Notifications ──
         ("GET", ["api", "notifications", "unacknowledged"]) => {

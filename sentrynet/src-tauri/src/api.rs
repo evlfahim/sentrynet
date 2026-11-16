@@ -10,11 +10,12 @@
 
 use crate::alerts;
 use crate::arp;
+use crate::cleanup;
 use crate::core;
 use crate::database::{self, Database};
 use crate::latency;
 use crate::port_scan;
-use crate::rest_server::RestServer;
+use crate::rest_server;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -177,6 +178,8 @@ pub struct AppConfig {
     pub alert_rules_device_offline: bool,
     /// Alert rule: fire when an open port closes.
     pub alert_rules_port_closed: bool,
+    /// Cleanup interval in seconds (0 = disabled).
+    pub cleanup_interval_seconds: u64,
 }
 
 impl Default for AppConfig {
@@ -201,6 +204,7 @@ impl Default for AppConfig {
             alert_rules_new_port: true,
             alert_rules_device_offline: true,
             alert_rules_port_closed: true,
+            cleanup_interval_seconds: 21_600,
         }
     }
 }
@@ -294,6 +298,17 @@ pub struct CleanupResult {
     pub alerts_deleted: usize,
 }
 
+/// Cleanup status (for the status endpoint).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanupStatus {
+    /// History retention period in days (0 = unlimited).
+    pub history_retention_days: u64,
+    /// Cleanup interval in seconds (0 = disabled).
+    pub cleanup_interval_seconds: u64,
+    /// Whether the cleanup scheduler is active.
+    pub scheduler_active: bool,
+}
+
 /// Where the frontend can reach the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiServerInfo {
@@ -305,10 +320,11 @@ pub struct ApiServerInfo {
     pub rest_error: Option<String>,
 }
 
-/// Tauri-managed state: keeps the REST server alive for the app's lifetime.
+/// Tauri-managed state: keeps the REST server and cleanup scheduler alive for the app's lifetime.
 pub struct ApiServerState {
     pub info: ApiServerInfo,
-    pub server: Option<RestServer>,
+    pub server: Option<rest_server::RestServer>,
+    pub cleanup_scheduler: Option<cleanup::CleanupScheduler>,
 }
 
 // ──────────────────────────────────────────────
@@ -348,11 +364,12 @@ pub fn read_config_from_db(db: &Database) -> AppConfig {
         alert_rules_new_port: parsed(&map, "alert_rules_new_port", d.alert_rules_new_port),
         alert_rules_device_offline: parsed(&map, "alert_rules_device_offline", d.alert_rules_device_offline),
         alert_rules_port_closed: parsed(&map, "alert_rules_port_closed", d.alert_rules_port_closed),
+        cleanup_interval_seconds: parsed(&map, "cleanup_interval_seconds", d.cleanup_interval_seconds),
     }
 }
 
 pub fn write_config_to_db(db: &Database, config: &AppConfig) -> Result<(), String> {
-    let pairs: [(&str, String); 19] = [
+    let pairs: [(&str, String); 20] = [
         ("default_cidr", config.default_cidr.clone().unwrap_or_default()),
         ("arp_settle_ms", config.arp_settle_ms.to_string()),
         ("port_scan_timeout_ms", config.port_scan_timeout_ms.to_string()),
@@ -372,6 +389,7 @@ pub fn write_config_to_db(db: &Database, config: &AppConfig) -> Result<(), Strin
         ("alert_rules_new_port", config.alert_rules_new_port.to_string()),
         ("alert_rules_device_offline", config.alert_rules_device_offline.to_string()),
         ("alert_rules_port_closed", config.alert_rules_port_closed.to_string()),
+        ("cleanup_interval_seconds", config.cleanup_interval_seconds.to_string()),
     ];
     let tx = db.conn.unchecked_transaction().map_err(|e| e.to_string())?;
     for (key, value) in pairs.iter() {
@@ -792,6 +810,16 @@ pub fn handle_cleanup(db: &Database) -> Result<CleanupResult, ApiError> {
     })
 }
 
+/// Get the current cleanup configuration and scheduler status.
+pub fn handle_cleanup_status(db: &Database, scheduler_active: bool) -> Result<CleanupStatus, ApiError> {
+    let config = read_config_from_db(db);
+    Ok(CleanupStatus {
+        history_retention_days: config.history_retention_days,
+        cleanup_interval_seconds: config.cleanup_interval_seconds,
+        scheduler_active,
+    })
+}
+
 /// Get all unacknowledged alerts (for the web dashboard to display via browser notifications).
 pub fn handle_get_unacknowledged_alerts(db: &Database) -> Result<Vec<database::Alert>, ApiError> {
     Ok(db.get_unacknowledged_alerts()?)
@@ -1083,6 +1111,23 @@ pub async fn api_cleanup(db_path: String) -> Result<ApiResponse<CleanupResult>, 
     run_blocking(move || handle_cleanup(&open_db(&db_path)?)).await
 }
 
+/// Get the current cleanup configuration and scheduler status.
+#[tauri::command]
+pub fn api_cleanup_status(
+    db_path: String,
+    state: tauri::State<'_, ApiServerState>,
+) -> ApiResponse<CleanupStatus> {
+    let scheduler_active = state.cleanup_scheduler.is_some();
+    match open_db(&db_path) {
+        Ok(db) => ApiResponse::ok(handle_cleanup_status(&db, scheduler_active).unwrap_or_else(|e| CleanupStatus {
+            history_retention_days: 0,
+            cleanup_interval_seconds: 0,
+            scheduler_active,
+        })),
+        Err(e) => ApiResponse::err(e.message),
+    }
+}
+
 /// Re-send desktop notifications for all unacknowledged alerts.
 #[tauri::command]
 pub async fn api_notify_pending_alerts(db_path: String) -> Result<ApiResponse<alerts::NotifyOutcome>, String> {
@@ -1253,6 +1298,7 @@ mod tests {
             alert_rules_new_port: false,
             alert_rules_device_offline: true,
             alert_rules_port_closed: false,
+            cleanup_interval_seconds: 7200,
         };
         write_config_to_db(&db, &config).unwrap();
         assert_eq!(read_config_from_db(&db), config);
