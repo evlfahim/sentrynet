@@ -7,6 +7,16 @@
  */
 
 import { isTauriRuntime, maxAlertId, newAlertsSince, planNotifications } from './alerts';
+import {
+  fmtDate,
+  fmtMs,
+  latencyClass,
+  latencyBarWidth,
+  stateBadge,
+  alertIcon,
+  eventTypeLabel,
+  escapeHtml,
+} from './dashboard-utils';
 
 // ──────────────────────────────────────────────
 // Types (mirror src-tauri/src/api.rs)
@@ -201,58 +211,6 @@ async function apiPut<T>(path: string, body?: unknown): Promise<T> {
   const json = await res.json();
   if (!json.success) throw new Error(json.error ?? 'API error');
   return json.data as T;
-}
-
-// ──────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────
-
-function fmtDate(iso: string): string {
-  try { return new Date(iso).toLocaleString(); } catch { return iso; }
-}
-
-function fmtMs(ms: number | null): string {
-  if (ms === null) return '—';
-  if (ms < 10) return `${ms.toFixed(1)}ms`;
-  return `${Math.round(ms)}ms`;
-}
-
-function latencyClass(ms: number | null): string {
-  if (ms === null) return '';
-  if (ms < 20) return 'fast';
-  if (ms < 100) return 'medium';
-  return 'slow';
-}
-
-function latencyBarWidth(ms: number | null): number {
-  if (ms === null) return 0;
-  return Math.min(100, (ms / 500) * 100);
-}
-
-function stateBadge(state: string): string {
-  const s = state.toLowerCase();
-  if (s === 'open') return 'badge-open';
-  if (s === 'closed') return 'badge-closed';
-  if (s === 'filtered') return 'badge-filtered';
-  return '';
-}
-
-function alertIcon(type: string): string {
-  switch (type) {
-    case 'new_device': return '🟢';
-    case 'new_port': return '🔓';
-    case 'device_offline': return '🔴';
-    case 'port_closed': return '🔒';
-    default: return '⚠️';
-  }
-}
-
-function eventTypeLabel(type: string): string {
-  return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ──────────────────────────────────────────────

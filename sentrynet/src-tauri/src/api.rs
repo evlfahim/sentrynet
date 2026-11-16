@@ -1780,7 +1780,7 @@ mod tests {
 
     #[test]
     fn test_validate_config_rejects_too_large_retention() {
-        let db = make_test_db();
+        let _db = make_test_db();
         let config = AppConfig {
             history_retention_days: 3651,
             ..AppConfig::default()
@@ -1855,7 +1855,7 @@ mod tests {
         let mut db = make_test_db();
         db.upsert_device(&make_device("192.168.1.1", "AA:BB:CC:DD:EE:01")).unwrap();
 
-        let opts = FullScanOptions {
+        let _opts = FullScanOptions {
             check_latency: false,
             ..Default::default()
         };

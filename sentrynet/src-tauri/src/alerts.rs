@@ -693,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn notify_with_disabled_sends_nothing() {
+    fn notify_with_disabled_sends_nothing_v2() {
         let sink = |_: &Notification| -> Result<(), String> { Err("should not be called".into()) };
         let outcome = notify_with(false, &[alert("192.168.1.9", ALERT_NEW_DEVICE)], &sink);
         assert!(outcome.skipped);
@@ -701,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn notify_with_counts_failures() {
+    fn notify_with_counts_failures_v2() {
         let sink = |_: &Notification| -> Result<(), String> { Err("no display".into()) };
         let outcome = notify_with(true, &[alert("192.168.1.9", ALERT_NEW_DEVICE)], &sink);
         assert_eq!(outcome.sent, 0);

@@ -1156,7 +1156,7 @@ mod tests {
         let db = Database::open_memory().unwrap();
         let a1 = make_alert("192.168.1.1", "new_device", "unacked");
         let a2 = make_alert("192.168.1.2", "new_port", "acked");
-        let id1 = db.create_alert(&a1).unwrap();
+        let _id1 = db.create_alert(&a1).unwrap();
         let id2 = db.create_alert(&a2).unwrap();
         db.acknowledge_alert(id2).unwrap();
 
