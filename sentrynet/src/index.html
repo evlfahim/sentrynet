@@ -3,14 +3,260 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SentryNet - LAN Security Scanner</title>
+    <title>SentryNet — LAN Security Scanner</title>
+    <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <div id="app">
-      <h1>SentryNet</h1>
-      <p>LAN Security Scanner</p>
-      <div id="status">Initializing...</div>
+    <!-- Header -->
+    <header class="header">
+      <h1><span>Sentry</span>Net</h1>
+      <div class="header-actions">
+        <div class="status-badge" id="statusBadge">
+          <span class="dot"></span>
+          <span id="statusText">Connecting…</span>
+        </div>
+        <button class="btn btn-primary" id="btnScan">
+          &#x21bb; Scan LAN
+        </button>
+        <button class="btn" id="btnRefresh">&#x21bb; Refresh</button>
+        <button class="btn" id="btnExport">Export</button>
+      </div>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="tabs-bar">
+      <button class="tab-btn active" data-tab="devices">Devices</button>
+      <button class="tab-btn" data-tab="ports">Ports</button>
+      <button class="tab-btn" data-tab="latency">Latency</button>
+      <button class="tab-btn" data-tab="history">History</button>
+      <button class="tab-btn" data-tab="alerts">
+        Alerts <span class="tab-badge" id="alertBadge" style="display:none">0</span>
+      </button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
+    </nav>
+
+    <!-- Main content -->
+    <main class="main">
+      <!-- Scan progress -->
+      <div class="scan-progress" id="scanProgress">
+        <div class="scan-spinner"></div>
+        <span id="scanStatus">Scanning…</span>
+      </div>
+
+      <!-- ── Devices tab ──────────────────────────── -->
+      <div class="tab-panel active" id="panel-devices">
+        <div class="stats-row" id="statsRow">
+          <div class="stat-card devices">
+            <div class="stat-value" id="statDevices">—</div>
+            <div class="stat-label">Devices</div>
+          </div>
+          <div class="stat-card ports">
+            <div class="stat-value" id="statPorts">—</div>
+            <div class="stat-label">Open Ports</div>
+          </div>
+          <div class="stat-card alerts">
+            <div class="stat-value" id="statAlerts">—</div>
+            <div class="stat-label">Unack Alerts</div>
+          </div>
+          <div class="stat-card history">
+            <div class="stat-value" id="statHistory">—</div>
+            <div class="stat-label">History</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Device List</div>
+          <div class="table-wrap">
+            <table id="deviceTable">
+              <thead>
+                <tr>
+                  <th>IP</th>
+                  <th>MAC</th>
+                  <th>Name</th>
+                  <th>Vendor</th>
+                  <th>Ports</th>
+                  <th>Latency</th>
+                  <th>Status</th>
+                  <th>Last Seen</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="deviceBody">
+                <tr><td colspan="9" class="empty-state"><div class="empty-icon">&#x1f50d;</div><p>No devices yet. Run a scan to discover devices.</p></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Ports tab ────────────────────────────── -->
+      <div class="tab-panel" id="panel-ports">
+        <div class="card">
+          <div class="card-title">Open Ports</div>
+          <div class="table-wrap">
+            <table id="portTable">
+              <thead>
+                <tr>
+                  <th>Device IP</th>
+                  <th>Port</th>
+                  <th>Protocol</th>
+                  <th>State</th>
+                  <th>Service</th>
+                </tr>
+              </thead>
+              <tbody id="portBody">
+                <tr><td colspan="5" class="empty-state"><div class="empty-icon">&#x1f50c;</div><p>No ports discovered yet.</p></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Latency tab ──────────────────────────── -->
+      <div class="tab-panel" id="panel-latency">
+        <div class="card">
+          <div class="card-title">Latency Overview</div>
+          <div class="table-wrap">
+            <table id="latencyTable">
+              <thead>
+                <tr>
+                  <th>Device IP</th>
+                  <th>ICMP</th>
+                  <th>HTTP</th>
+                  <th>Packet Loss</th>
+                </tr>
+              </thead>
+              <tbody id="latencyBody">
+                <tr><td colspan="4" class="empty-state"><div class="empty-icon">&#x23f1;</div><p>No latency data yet. Run a scan.</p></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── History tab ──────────────────────────── -->
+      <div class="tab-panel" id="panel-history">
+        <div class="card">
+          <div class="card-title">Event Timeline</div>
+          <div class="timeline" id="timeline">
+            <div class="empty-state"><div class="empty-icon">&#x1f4dd;</div><p>No history yet.</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Alerts tab ───────────────────────────── -->
+      <div class="tab-panel" id="panel-alerts">
+        <div class="card">
+          <div class="card-title">Alerts</div>
+          <div id="alertsList">
+            <div class="empty-state"><div class="empty-icon">&#x1f514;</div><p>No alerts.</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Settings tab ─────────────────────────── -->
+      <div class="tab-panel" id="panel-settings">
+        <div class="card">
+          <div class="card-title">Scan Configuration</div>
+          <form id="settingsForm" class="form-grid">
+            <div class="form-group">
+              <label for="cfgCidr">Default CIDR</label>
+              <input id="cfgCidr" type="text" placeholder="e.g. 192.168.1.0/24" />
+            </div>
+            <div class="form-group">
+              <label for="cfgArpSettle">ARP Settle (ms)</label>
+              <input id="cfgArpSettle" type="number" min="0" max="60000" />
+            </div>
+            <div class="form-group">
+              <label for="cfgPortTimeout">Port Scan Timeout (ms)</label>
+              <input id="cfgPortTimeout" type="number" min="1" max="60000" />
+            </div>
+            <div class="form-group">
+              <label for="cfgPortConcurrency">Port Scan Concurrency</label>
+              <input id="cfgPortConcurrency" type="number" min="1" max="1024" />
+            </div>
+            <div class="form-group">
+              <label for="cfgPingCount">Ping Count</label>
+              <input id="cfgPingCount" type="number" min="1" max="20" />
+            </div>
+            <div class="form-group">
+              <label for="cfgPingTimeout">Ping Timeout (ms)</label>
+              <input id="cfgPingTimeout" type="number" min="1" max="60000" />
+            </div>
+            <div class="form-group">
+              <label for="cfgHttpPort">HTTP Port</label>
+              <input id="cfgHttpPort" type="number" min="1" max="65535" />
+            </div>
+            <div class="form-group">
+              <label for="cfgHttpPath">HTTP Path</label>
+              <input id="cfgHttpPath" type="text" placeholder="/health" />
+            </div>
+            <div class="form-group">
+              <label for="cfgHttpTimeout">HTTP Timeout (ms)</label>
+              <input id="cfgHttpTimeout" type="number" min="1" max="60000" />
+            </div>
+            <div class="form-group">
+              <label for="cfgRetention">History Retention (days, 0=unlimited)</label>
+              <input id="cfgRetention" type="number" min="0" max="3650" />
+            </div>
+            <div class="form-group checkbox-group">
+              <input id="cfgSvcDetect" type="checkbox" />
+              <label for="cfgSvcDetect">Service Detection</label>
+            </div>
+            <div class="form-group checkbox-group">
+              <input id="cfgLatency" type="checkbox" />
+              <label for="cfgLatency">Check Latency</label>
+            </div>
+            <div class="form-group checkbox-group">
+              <input id="cfgNotify" type="checkbox" />
+              <label for="cfgNotify">Enable Notifications</label>
+            </div>
+          </form>
+          <div style="margin-top:16px; display:flex; gap:8px;">
+            <button class="btn btn-primary" id="btnSaveConfig">Save Config</button>
+            <button class="btn" id="btnResetConfig">Reset to Defaults</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Maintenance</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn" id="btnCleanup">Run Cleanup</button>
+            <button class="btn btn-danger" id="btnClearAll">Clear All Data</button>
+          </div>
+          <div id="cleanupResult" style="margin-top:12px; font-size:.82rem; color:var(--text-dim);"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Device detail panel -->
+    <aside class="detail-panel" id="detailPanel">
+      <div class="detail-header">
+        <h3 id="detailTitle">Device</h3>
+        <button class="btn btn-sm" id="btnCloseDetail">&#x2715;</button>
+      </div>
+      <div class="detail-body" id="detailBody"></div>
+    </aside>
+
+    <!-- Export modal -->
+    <div class="overlay" id="exportOverlay" style="display:none">
+      <div class="modal">
+        <h2>Export Data</h2>
+        <p style="font-size:.85rem; color:var(--text-dim); margin-bottom:16px;">Choose what to export:</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn" id="btnExportDevices">Devices (JSON)</button>
+          <button class="btn" id="btnExportPorts">Ports (JSON)</button>
+          <button class="btn" id="btnExportHistory">History (JSON)</button>
+        </div>
+        <div style="margin-top:16px; text-align:right;">
+          <button class="btn" id="btnCloseExport">Close</button>
+        </div>
+      </div>
     </div>
-    <script type="module" src="/src/main.ts"></script>
+
+    <!-- Toast container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script type="module" src="/src/dashboard.ts"></script>
   </body>
 </html>

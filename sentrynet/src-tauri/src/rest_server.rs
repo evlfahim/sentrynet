@@ -33,7 +33,7 @@
 //! | GET    | /api/export/{devices,history,ports} | JSON download             |
 //! | POST   | /api/cleanup                  | apply retention policy          |
 
-use crate::api::{self, ApiError, ApiResponse};
+use crate::api::{self, ApiError, ApiServerInfo, ApiResponse};
 use crate::database::Database;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -457,6 +457,14 @@ pub fn route(req: &HttpRequest, db_path: &str) -> HttpResponse {
             &ApiResponse::ok(Health {
                 status: "ok",
                 version: env!("CARGO_PKG_VERSION"),
+            }),
+        ),
+        ("GET", ["api", "server_info"]) => HttpResponse::json(
+            200,
+            &ApiResponse::ok(ApiServerInfo {
+                db_path: db_path.to_string(),
+                rest_url: None,
+                rest_error: None,
             }),
         ),
 
