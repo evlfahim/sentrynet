@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS ports (
 -- History table: append-only log of state changes
 CREATE TABLE IF NOT EXISTS history (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_ip       TEXT NOT NULL REFERENCES devices(ip) ON DELETE CASCADE,
+    device_ip       TEXT NOT NULL,
     event_type      TEXT NOT NULL,
     details         TEXT,
     timestamp       TEXT NOT NULL   -- ISO 8601 UTC
@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS history (
 -- Alerts table: actionable notifications
 CREATE TABLE IF NOT EXISTS alerts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_ip       TEXT NOT NULL REFERENCES devices(ip) ON DELETE CASCADE,
+    device_ip       TEXT NOT NULL,
     alert_type      TEXT NOT NULL,
     message         TEXT NOT NULL,
     acknowledged    INTEGER NOT NULL DEFAULT 0 CHECK (acknowledged IN (0,1)),
@@ -525,10 +525,13 @@ impl Database {
 
     /// Update the full application configuration from a JSON string.
     pub fn update_config_json(&self, json: &str) -> Result<()> {
-        let map: HashMap<String, String> = serde_json::from_str(json)
+        let value: serde_json::Value = serde_json::from_str(json)
             .map_err(|_| rusqlite::Error::QueryReturnedNoRows)?;
-        for (key, value) in &map {
-            self.set_config_value(key, value)?;
+        if let Some(obj) = value.as_object() {
+            for (key, value) in obj {
+                let value_str = value.to_string();
+                self.set_config_value(key, &value_str)?;
+            }
         }
         Ok(())
     }
@@ -943,11 +946,15 @@ mod tests {
         let record = make_history("192.168.1.1", "discovered");
         db.append_history(&record).unwrap();
 
+        let alert = make_alert("192.168.1.1", "new_device", "Test");
+        db.create_alert(&alert).unwrap();
+
         db.remove_device("192.168.1.1").unwrap();
         assert_eq!(db.device_count().unwrap(), 0);
-        assert_eq!(db.history_count().unwrap(), 0);
-        // Ports are also deleted via CASCADE
-        assert!(db.get_ports("192.168.1.1").unwrap().is_empty());
+        // Without FK constraints, related records remain; caller must clean up
+        assert_eq!(db.history_count().unwrap(), 1);
+        assert_eq!(db.alert_count().unwrap(), 1);
+        assert_eq!(db.get_ports("192.168.1.1").unwrap().len(), 1);
     }
 
     #[test]
