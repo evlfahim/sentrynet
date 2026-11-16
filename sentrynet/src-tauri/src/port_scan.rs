@@ -855,4 +855,84 @@ mod tests {
         assert!(result.elapsed_ms > 0.0);
         assert!(result.elapsed_ms < 5000.0); // Should complete quickly
     }
+
+    // ── tcp_scan with custom ports ──
+
+    #[test]
+    fn tcp_scan_custom_ports() {
+        let options = TcpScanOptions {
+            hosts: vec!["127.0.0.1".to_string()],
+            ports: vec![65534, 65533],
+            ..Default::default()
+        };
+        let result = tcp_scan(&options);
+        assert!(result.is_ok());
+        let results = result.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].total_scanned, 2);
+    }
+
+    #[test]
+    fn tcp_scan_deduplicates_ports() {
+        let options = TcpScanOptions {
+            hosts: vec!["127.0.0.1".to_string()],
+            ports: vec![80, 80, 443, 443, 22],
+            ..Default::default()
+        };
+        let result = tcp_scan(&options);
+        assert!(result.is_ok());
+        let results = result.unwrap();
+        assert_eq!(results[0].total_scanned, 3); // deduplicated
+    }
+
+    #[test]
+    fn tcp_scan_sorts_ports() {
+        let options = TcpScanOptions {
+            hosts: vec!["127.0.0.1".to_string()],
+            ports: vec![443, 22, 80],
+            ..Default::default()
+        };
+        let result = tcp_scan(&options);
+        assert!(result.is_ok());
+        let results = result.unwrap();
+        assert_eq!(results[0].total_scanned, 3);
+    }
+
+    // ── scan_and_store ──
+
+    #[test]
+    fn scan_and_store_stores_open_ports() {
+        let mut db = Database::open_memory().unwrap();
+        db.upsert_device(&crate::database::Device {
+            ip: "192.168.1.1".to_string(),
+            mac: "AA:BB:CC:DD:EE:01".to_string(),
+            name: Some("TestDevice".to_string()),
+            vendor: Some("TestVendor".to_string()),
+            last_seen: Utc::now(),
+            first_seen: Utc::now() - chrono::Duration::hours(1),
+        }).unwrap();
+
+        let options = TcpScanOptions {
+            hosts: vec!["127.0.0.1".to_string()],
+            ports: vec![65534],
+            timeout_ms: 50,
+            concurrency: 1,
+            service_detection: false,
+        };
+        let result = scan_and_store(&mut db, "127.0.0.1", &options);
+        assert!(result.is_ok());
+        // Port 65534 should be closed, so no ports stored
+        let ports = db.get_ports("127.0.0.1").unwrap();
+        assert!(ports.is_empty());
+    }
+
+    // ── scan_host with empty ports ──
+
+    #[test]
+    fn scan_host_empty_ports_returns_empty_open() {
+        let result = scan_host("127.0.0.1", &[], 100, 1, false);
+        assert_eq!(result.ip, "127.0.0.1");
+        assert_eq!(result.total_scanned, 0);
+        assert!(result.open_ports.is_empty());
+    }
 }

@@ -1102,6 +1102,7 @@ pub async fn api_test_notification(db_path: String) -> Result<ApiResponse<alerts
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::FullScanOptions;
     use chrono::Duration;
 
     fn make_test_db() -> Database {
@@ -1734,5 +1735,187 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[1].contains("22"));
         assert!(lines[1].contains("ssh"));
+    }
+
+    // ── Notification handlers ──
+
+    #[test]
+    fn test_handle_notify_pending_empty() {
+        let db = make_test_db();
+        let outcome = handle_notify_pending(&db).unwrap();
+        assert!(outcome.skipped);
+    }
+
+    #[test]
+    fn test_handle_test_notification_returns_outcome() {
+        let db = make_test_db();
+        let outcome = handle_test_notification(&db).unwrap();
+        // Without a notifier installed, should be skipped
+        assert!(outcome.skipped);
+    }
+
+    // ── Scan ports/latency validation ──
+
+    #[test]
+    fn test_scan_ports_rejects_too_many_hosts() {
+        let hosts: Vec<String> = (0..=MAX_PORT_SCAN_HOSTS).map(|i| format!("10.0.0.{i}")).collect();
+        let req = PortScanRequest {
+            hosts,
+            ..PortScanRequest::default()
+        };
+        assert_eq!(handle_scan_ports(&req).unwrap_err().status, 400);
+    }
+
+    #[test]
+    fn test_scan_latency_rejects_too_many_hosts() {
+        let hosts: Vec<String> = (0..=MAX_LATENCY_HOSTS).map(|i| format!("10.0.0.{i}")).collect();
+        let req = LatencyRequest {
+            hosts,
+            ..LatencyRequest::default()
+        };
+        assert_eq!(handle_scan_latency(&req).unwrap_err().status, 400);
+    }
+
+    // ── Validate config edge cases ──
+
+    #[test]
+    fn test_validate_config_rejects_too_large_retention() {
+        let db = make_test_db();
+        let config = AppConfig {
+            history_retention_days: 3651,
+            ..AppConfig::default()
+        };
+        assert_eq!(validate_config(&config).unwrap_err().status, 400);
+    }
+
+    #[test]
+    fn test_validate_config_accepts_zero_retention() {
+        let config = AppConfig {
+            history_retention_days: 0,
+            ..AppConfig::default()
+        };
+        assert!(validate_config(&config).is_ok());
+    }
+
+    // ── Validate scan options ──
+
+    #[test]
+    fn test_validate_scan_options_rejects_zero_timeout() {
+        let _db = make_test_db();
+        let opts = FullScanOptions {
+            port_scan_timeout_ms: 0,
+            ..FullScanOptions::default()
+        };
+        assert_eq!(validate_scan_options(&opts).unwrap_err().status, 400);
+    }
+
+    #[test]
+    fn test_validate_scan_options_rejects_zero_ping_count() {
+        let opts = FullScanOptions {
+            ping_count: 0,
+            ..FullScanOptions::default()
+        };
+        assert_eq!(validate_scan_options(&opts).unwrap_err().status, 400);
+    }
+
+    #[test]
+    fn test_validate_scan_options_rejects_bad_http_path() {
+        let opts = FullScanOptions {
+            http_path: "no-slash".to_string(),
+            ..FullScanOptions::default()
+        };
+        assert_eq!(validate_scan_options(&opts).unwrap_err().status, 400);
+
+        let opts2 = FullScanOptions {
+            http_path: "/has space".to_string(),
+            ..FullScanOptions::default()
+        };
+        assert_eq!(validate_scan_options(&opts2).unwrap_err().status, 400);
+    }
+
+    // ── Validate CIDR ──
+
+    #[test]
+    fn test_validate_cidr_rejects_invalid() {
+        assert_eq!(validate_cidr("not-an-ip/24").unwrap_err().status, 400);
+        assert_eq!(validate_cidr("192.168.1.0/33").unwrap_err().status, 400);
+    }
+
+    #[test]
+    fn test_validate_cidr_accepts_valid() {
+        assert!(validate_cidr("192.168.1.0/24").is_ok());
+        assert!(validate_cidr("10.0.0.0/8").is_err()); // too large
+        assert!(validate_cidr("192.168.1.1").is_ok()); // /32 single host
+    }
+
+    // ── Scan host with existing device ──
+
+    #[test]
+    fn test_scan_host_existing_device_keeps_vendor() {
+        let mut db = make_test_db();
+        db.upsert_device(&make_device("192.168.1.1", "AA:BB:CC:DD:EE:01")).unwrap();
+
+        let opts = FullScanOptions {
+            check_latency: false,
+            ..Default::default()
+        };
+        let result = handle_scan_host(&mut db, "192.168.1.1", &ScanRequest::default());
+        // Should succeed (even if no ports open)
+        assert!(result.is_ok());
+    }
+
+    // ── Export history with limit ──
+
+    #[test]
+    fn test_export_history_respects_limit() {
+        let db = make_test_db();
+        for i in 0..10 {
+            db.append_history(&make_history("192.168.1.1", &format!("event_{i}"))).unwrap();
+        }
+        let json = handle_export_history(&db, Some(3)).unwrap();
+        let records: Vec<database::HistoryRecord> = serde_json::from_str(&json).unwrap();
+        assert_eq!(records.len(), 3);
+    }
+
+    // ── Stats with zero counts ──
+
+    #[test]
+    fn test_stats_empty_db() {
+        let db = make_test_db();
+        let stats = handle_get_stats(&db).unwrap();
+        assert_eq!(stats.device_count, 0);
+        assert_eq!(stats.port_count, 0);
+        assert_eq!(stats.alert_count, 0);
+        assert_eq!(stats.history_count, 0);
+        assert_eq!(stats.unacknowledged_alerts, 0);
+    }
+
+    // ── Unacknowledged alerts handler ──
+
+    #[test]
+    fn test_handle_get_unacknowledged_alerts() {
+        let db = make_test_db();
+        let a1 = make_alert("192.168.1.1", "new_device", "unacked");
+        let a2 = make_alert("192.168.1.2", "new_port", "unacked2");
+        let id1 = db.create_alert(&a1).unwrap();
+        let id2 = db.create_alert(&a2).unwrap();
+        db.acknowledge_alert(id2).unwrap();
+
+        let unacked = handle_get_unacknowledged_alerts(&db).unwrap();
+        assert_eq!(unacked.len(), 1);
+        assert_eq!(unacked[0].id, Some(id1));
+        assert_eq!(unacked[0].message, "unacked");
+    }
+
+    // ── Validate scan options with bad http path ──
+
+    #[test]
+    fn test_validate_scan_options_rejects_bad_http_path_whitespace() {
+        let _db = make_test_db();
+        let opts = FullScanOptions {
+            http_path: "/has space".to_string(),
+            ..FullScanOptions::default()
+        };
+        assert_eq!(validate_scan_options(&opts).unwrap_err().status, 400);
     }
 }

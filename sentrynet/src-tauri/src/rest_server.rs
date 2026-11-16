@@ -1097,4 +1097,73 @@ mod tests {
             }
         }
     }
+
+    // ── Notifications routes ──
+
+    #[test]
+    fn test_route_notifications_unacknowledged() {
+        let tmp = TempDb::new("notif");
+        let _ = seed(&tmp.db());
+        let resp = route(&request("GET", "/api/notifications/unacknowledged", ""), tmp.path());
+        assert_eq!(resp.status, 200);
+        let json = resp.body_json().unwrap();
+        assert_eq!(json["data"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_route_notifications_resend() {
+        let tmp = TempDb::new("notif2");
+        seed(&tmp.db());
+        let resp = route(&request("POST", "/api/notifications/resend", ""), tmp.path());
+        assert_eq!(resp.status, 200);
+        let json = resp.body_json().unwrap();
+        assert!(json["data"]["skipped"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_route_notifications_test() {
+        let tmp = TempDb::new("notif3");
+        seed(&tmp.db());
+        let resp = route(&request("POST", "/api/notifications/test", ""), tmp.path());
+        assert_eq!(resp.status, 200);
+        let json = resp.body_json().unwrap();
+        assert!(json["data"]["skipped"].as_bool().unwrap());
+    }
+
+    // ── Path matching ──
+
+    #[test]
+    fn test_path_matches() {
+        assert!(path_matches("/api/devices/{ip}", &["api", "devices", "192.168.1.1"]));
+        assert!(path_matches("/api/devices/{ip}/ports", &["api", "devices", "192.168.1.1", "ports"]));
+        assert!(!path_matches("/api/devices/{ip}", &["api", "devices"]));
+        assert!(!path_matches("/api/devices/{ip}", &["api", "devices", "192.168.1.1", "ports"]));
+        assert!(path_matches("/api/health", &["api", "health"]));
+    }
+
+    // ── Percent decode edge cases ──
+
+    #[test]
+    fn test_percent_decode_edge_cases() {
+        assert_eq!(percent_decode("%", false), "%");
+        assert_eq!(percent_decode("%2", false), "%2");
+        assert_eq!(percent_decode("%2G", false), "%2G");
+        assert_eq!(percent_decode("%%", false), "%%");
+        assert_eq!(percent_decode("%20%20", false), "  ");
+    }
+
+    // ── Split target edge cases ──
+
+    #[test]
+    fn test_split_target_no_query() {
+        let (path, query) = split_target("/api/health");
+        assert_eq!(path, "/api/health");
+        assert!(query.is_empty());
+    }
+
+    #[test]
+    fn test_split_target_empty_query_value() {
+        let (_, query) = split_target("/api?flag");
+        assert_eq!(query.get("flag").map(String::as_str), Some(""));
+    }
 }

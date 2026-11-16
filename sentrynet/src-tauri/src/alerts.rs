@@ -572,4 +572,140 @@ mod tests {
         let db = Database::open_memory().unwrap();
         assert!(read_config_from_db(&db).enable_notifications);
     }
+
+    // ── Notifier management ──
+
+    #[test]
+    fn set_and_clear_notifier() {
+        use std::sync::Mutex;
+        clear_notifier();
+        let shown = Arc::new(Mutex::new(Vec::new()));
+        let shown_clone = Arc::clone(&shown);
+        let sink = move |n: &Notification| -> Result<(), String> {
+            shown_clone.lock().unwrap().push(n.clone());
+            Ok(())
+        };
+        set_notifier(Arc::new(sink));
+        // Should be installed
+        assert!(current_notifier().is_some());
+        clear_notifier();
+        assert!(current_notifier().is_none());
+    }
+
+    // ── Summary body ──
+
+    #[test]
+    fn summary_body_shows_first_three_ips() {
+        let alerts: Vec<Alert> = (1..=5)
+            .map(|i| alert(&format!("192.168.1.{i}"), ALERT_NEW_DEVICE))
+            .collect();
+        let body = summary_body(&alerts.iter().collect::<Vec<_>>());
+        assert!(body.contains("192.168.1.1"));
+        assert!(body.contains("192.168.1.2"));
+        assert!(body.contains("192.168.1.3"));
+        assert!(body.contains("and 2 more"));
+        assert!(!body.contains("192.168.1.5"));
+    }
+
+    #[test]
+    fn summary_body_no_duplicates() {
+        // Use 4 alerts so they get collapsed into a summary (> MAX_INDIVIDUAL_NOTIFICATIONS)
+        let alerts: Vec<Alert> = vec![
+            alert("192.168.1.1", ALERT_NEW_DEVICE),
+            alert("192.168.1.1", ALERT_NEW_DEVICE),
+            alert("192.168.1.1", ALERT_NEW_DEVICE),
+            alert("192.168.1.2", ALERT_NEW_DEVICE),
+        ];
+        let body = summary_body(&alerts.iter().collect::<Vec<_>>());
+        // Duplicates should be removed: only 192.168.1.1 and 192.168.1.2
+        assert_eq!(body.matches("192.168.1.1").count(), 1);
+        assert!(body.contains("192.168.1.2"));
+        // Both unique IPs are shown, so no "and X more"
+        assert!(!body.contains("and"));
+    }
+
+    #[test]
+    fn summary_body_single_ip() {
+        let alerts: Vec<Alert> = vec![alert("192.168.1.1", ALERT_NEW_DEVICE)];
+        let body = summary_body(&alerts.iter().collect::<Vec<_>>());
+        assert!(body.contains("192.168.1.1"));
+        assert!(!body.contains("and"));
+    }
+
+    // ── Plan notifications with unknown type ──
+
+    #[test]
+    fn plan_notifications_unknown_type_uses_default_title() {
+        let planned = plan_notifications(&[alert("10.0.0.1", "custom_type")]);
+        assert_eq!(planned.len(), 1);
+        assert_eq!(planned[0].title, "SentryNet alert");
+    }
+
+    #[test]
+    fn plan_notifications_mixed_types_ordered() {
+        let alerts = vec![
+            alert("192.168.1.5", ALERT_PORT_CLOSED),
+            alert("192.168.1.6", ALERT_NEW_DEVICE),
+            alert("192.168.1.7", ALERT_NEW_PORT),
+            alert("192.168.1.8", ALERT_DEVICE_OFFLINE),
+        ];
+        let planned = plan_notifications(&alerts);
+        assert_eq!(planned.len(), 4);
+        // new_device first, then new_port, device_offline, port_closed
+        assert_eq!(planned[0].title, "New device discovered");
+        assert_eq!(planned[1].title, "New port opened");
+        assert_eq!(planned[2].title, "Device offline");
+        assert_eq!(planned[3].title, "Port closed");
+    }
+
+    // ── DeviceStatus ──
+
+    #[test]
+    fn device_status_known_is_not_new() {
+        assert!(!DeviceStatus::Known.is_new());
+    }
+
+    #[test]
+    fn device_status_new_is_new() {
+        assert!(DeviceStatus::New.is_new());
+    }
+
+    #[test]
+    fn device_status_mac_changed_is_new() {
+        assert!(DeviceStatus::MacChanged("old".into()).is_new());
+    }
+
+    // ── notify_with direct tests (no global state) ──
+
+    #[test]
+    fn notify_with_sends_when_enabled() {
+        use std::sync::Mutex;
+        let shown = Arc::new(Mutex::new(Vec::new()));
+        let shown_clone = Arc::clone(&shown);
+        let sink = move |n: &Notification| -> Result<(), String> {
+            shown_clone.lock().unwrap().push(n.clone());
+            Ok(())
+        };
+        let outcome = notify_with(true, &[alert("192.168.1.9", ALERT_NEW_DEVICE)], &sink);
+        assert_eq!(outcome.sent, 1);
+        assert_eq!(outcome.failed, 0);
+        assert!(!outcome.skipped);
+    }
+
+    #[test]
+    fn notify_with_disabled_sends_nothing() {
+        let sink = |_: &Notification| -> Result<(), String> { Err("should not be called".into()) };
+        let outcome = notify_with(false, &[alert("192.168.1.9", ALERT_NEW_DEVICE)], &sink);
+        assert!(outcome.skipped);
+        assert_eq!(outcome.sent, 0);
+    }
+
+    #[test]
+    fn notify_with_counts_failures() {
+        let sink = |_: &Notification| -> Result<(), String> { Err("no display".into()) };
+        let outcome = notify_with(true, &[alert("192.168.1.9", ALERT_NEW_DEVICE)], &sink);
+        assert_eq!(outcome.sent, 0);
+        assert_eq!(outcome.failed, 1);
+        assert_eq!(outcome.reason.as_deref(), Some("no display"));
+    }
 }

@@ -853,4 +853,104 @@ mod tests {
         assert_eq!(max, Some(6.0));
         assert_eq!(loss, 0.0);
     }
+
+    // ── ping_host with valid host (may fail on CI but should not panic) ──
+
+    #[test]
+    fn test_ping_host_localhost() {
+        let result = ping_host(&PingOptions {
+            host: "127.0.0.1".to_string(),
+            count: 1,
+            timeout_ms: 1000,
+        });
+        // Should succeed (ping may or may not reply, but the call itself should not error)
+        assert!(result.is_ok());
+        let samples = result.unwrap();
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].method, "icmp");
+    }
+
+    // ── http_head with valid host (should fail gracefully) ──
+
+    #[test]
+    fn test_http_head_localhost_closed() {
+        let result = http_head(&HttpHeadOptions {
+            host: "127.0.0.1".to_string(),
+            port: 65534,
+            use_https: false,
+            path: "/".to_string(),
+            host_header: "localhost".to_string(),
+            timeout_ms: 500,
+        });
+        // Should succeed but report failure (no server on that port)
+        assert!(result.is_ok());
+        let sample = result.unwrap();
+        assert_eq!(sample.method, "http");
+        assert!(!sample.success);
+    }
+
+    // ── check_latency with multiple hosts ──
+
+    #[test]
+    fn test_check_latency_multiple_hosts() {
+        let result = check_latency(&LatencyCheckOptions {
+            hosts: vec!["127.0.0.1".to_string(), "192.0.2.1".to_string()],
+            ping: PingOptions {
+                host: String::new(),
+                count: 1,
+                timeout_ms: 500,
+            },
+            http: HttpHeadOptions {
+                host: String::new(),
+                port: 65534,
+                use_https: false,
+                path: "/".to_string(),
+                host_header: "localhost".to_string(),
+                timeout_ms: 200,
+            },
+        });
+        assert!(result.is_ok());
+        let results = result.unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].host, "127.0.0.1");
+        assert_eq!(results[1].host, "192.0.2.1");
+    }
+
+    // ── Convenience functions ──
+
+    #[test]
+    fn test_ping_convenience() {
+        let result = ping("127.0.0.1");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_http_check_convenience() {
+        let result = http_check("127.0.0.1");
+        // Should succeed but report failure (no server on port 80)
+        assert!(result.is_ok());
+    }
+
+    // ── LatencyError display ──
+
+    #[test]
+    fn test_latency_error_display() {
+        let err = LatencyError::NoHosts;
+        assert!(err.to_string().contains("no hosts"));
+
+        let err = LatencyError::InvalidHost("bad".into());
+        assert!(err.to_string().contains("invalid host"));
+
+        let err = LatencyError::Ping("timeout".into());
+        assert!(err.to_string().contains("ping failed"));
+
+        let err = LatencyError::Http("refused".into());
+        assert!(err.to_string().contains("HTTP HEAD failed"));
+    }
+
+    #[test]
+    fn test_latency_error_is_error() {
+        let err = LatencyError::Ping("test".into());
+        let _: &dyn std::error::Error = &err;
+    }
 }

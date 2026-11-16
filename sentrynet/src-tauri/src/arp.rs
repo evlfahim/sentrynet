@@ -965,4 +965,118 @@ router.lan (192.168.1.2) at 0:50:56:a:b:c on en0 ifscope [ethernet]
         assert!(result.is_ok(), "{result:?}");
         assert!(result.unwrap().is_empty(), "loopback never appears in ARP");
     }
+
+    // ── detect_local_ipv4 ──
+
+    #[test]
+    fn detect_local_ipv4_returns_a_valid_address() {
+        let result = detect_local_ipv4();
+        assert!(result.is_ok(), "detect_local_ipv4 should succeed on a machine with a route");
+        let ip = result.unwrap();
+        assert!(!ip.is_loopback());
+        assert!(!ip.is_unspecified());
+    }
+
+    // ── resolve_subnet with None ──
+
+    #[test]
+    fn resolve_subnet_with_none_uses_local_address() {
+        let result = resolve_subnet(None);
+        assert!(result.is_ok(), "resolve_subnet(None) should succeed on a machine with a route");
+        let subnet = result.unwrap();
+        assert_eq!(subnet.prefix(), DEFAULT_PREFIX);
+    }
+
+    // ── ArpEntry serialization ──
+
+    #[test]
+    fn arp_entry_serializes_with_interface() {
+        let entry = ArpEntry {
+            ip: "192.168.1.1".into(),
+            mac: "B8:27:EB:12:34:56".into(),
+            vendor: Some("Raspberry Pi".into()),
+            interface: Some("eth0".into()),
+        };
+        let json = serde_json::to_value(&entry).unwrap();
+        assert_eq!(json["interface"], "eth0");
+    }
+
+    // ── Subnet /30 and /31 edge cases ──
+
+    #[test]
+    fn subnet_30_excludes_network_and_broadcast() {
+        let s = Subnet::parse("10.0.0.0/30").unwrap();
+        assert_eq!(s.hosts().len(), 2); // .1 and .2 (network .0 and broadcast .3 excluded)
+        assert_eq!(s.hosts()[0], Ipv4Addr::new(10, 0, 0, 1));
+        assert_eq!(s.hosts()[1], Ipv4Addr::new(10, 0, 0, 2));
+        // hosts() excludes network and broadcast for /30+
+        assert!(!s.hosts().contains(&Ipv4Addr::new(10, 0, 0, 0)));
+        assert!(!s.hosts().contains(&Ipv4Addr::new(10, 0, 0, 3)));
+    }
+
+    // ── VendorDb empty ──
+
+    #[test]
+    fn vendor_db_empty_returns_none() {
+        let db = VendorDb::empty();
+        assert!(db.is_empty());
+        assert_eq!(db.len(), 0);
+        assert_eq!(db.lookup(&mac("00:00:00:00:00:01")), None);
+        assert_eq!(db.describe(&mac("00:00:00:00:00:01")), None);
+    }
+
+    // ── VendorDb insert and lookup ──
+
+    #[test]
+    fn vendor_db_insert_and_lookup() {
+        let mut db = VendorDb::empty();
+        db.insert([0xAA, 0xBB, 0xCC], "TestVendor");
+        assert_eq!(db.len(), 1);
+        assert!(!db.is_empty());
+        assert_eq!(db.lookup(&[0xAA, 0xBB, 0xCC, 0x00, 0x00, 0x01]), Some("TestVendor"));
+        assert_eq!(db.lookup(&[0xAA, 0xBB, 0xDD, 0x00, 0x00, 0x01]), None);
+    }
+
+    // ── is_locally_administered ──
+
+    #[test]
+    fn locally_administered_various_macs() {
+        // Locally administered (second bit of first byte set)
+        assert!(is_locally_administered(&mac("02:00:00:00:00:01")));
+        assert!(is_locally_administered(&mac("da:a1:19:00:00:01")));
+        assert!(is_locally_administered(&mac("5a:bb:cc:dd:ee:ff")));
+        assert!(is_locally_administered(&mac("02:00:00:00:00:00"))); // 0x02 has bit 1 set
+        // Globally administered (second bit of first byte clear)
+        assert!(!is_locally_administered(&mac("00:00:00:00:00:01")));
+        assert!(!is_locally_administered(&mac("b8:27:eb:12:34:56")));
+    }
+
+    // ── is_usable_ip ──
+
+    #[test]
+    fn is_usable_ip_filters_special_addresses() {
+        assert!(is_usable_ip(Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(!is_usable_ip(Ipv4Addr::new(127, 0, 0, 1)));
+        assert!(!is_usable_ip(Ipv4Addr::new(0, 0, 0, 0)));
+        assert!(!is_usable_ip(Ipv4Addr::new(224, 0, 0, 1)));
+        assert!(!is_usable_ip(Ipv4Addr::new(255, 255, 255, 255)));
+    }
+
+    // ── Subnet Display ──
+
+    #[test]
+    fn subnet_display_format() {
+        let s = Subnet::parse("192.168.1.0/24").unwrap();
+        assert_eq!(s.to_string(), "192.168.1.0/24");
+    }
+
+    // ── Subnet mask ──
+
+    #[test]
+    fn subnet_mask_for_prefix() {
+        let s = Subnet::parse("192.168.1.0/24").unwrap();
+        assert_eq!(s.mask(), 0xFFFFFF00);
+        let s = Subnet::parse("10.0.0.0/16").unwrap();
+        assert_eq!(s.mask(), 0xFFFF0000);
+    }
 }

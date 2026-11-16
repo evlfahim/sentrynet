@@ -1090,4 +1090,106 @@ mod tests {
         assert_eq!(deleted, 2);
         assert!(db.get_ports("192.168.1.1").unwrap().is_empty());
     }
+
+    // ── Config JSON helpers ──
+
+    #[test]
+    fn test_get_config_json_empty() {
+        let db = Database::open_memory().unwrap();
+        let json = db.get_config_json().unwrap();
+        assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn test_update_config_json() {
+        let db = Database::open_memory().unwrap();
+        db.update_config_json(r#"{"ping_count": 5, "http_port": 443}"#).unwrap();
+        let json = db.get_config_json().unwrap();
+        assert!(json.contains("ping_count"));
+        assert!(json.contains("443"));
+        let map = db.read_all_config().unwrap();
+        assert_eq!(map.get("ping_count").map(String::as_str), Some("5"));
+        assert_eq!(map.get("http_port").map(String::as_str), Some("443"));
+    }
+
+    #[test]
+    fn test_get_config_all() {
+        let db = Database::open_memory().unwrap();
+        let value = db.get_config_all().unwrap();
+        assert!(value.is_object());
+        // Config table starts empty, so the object is empty
+        assert_eq!(value.as_object().unwrap().len(), 0);
+    }
+
+    // ── History by type ──
+
+    #[test]
+    fn test_get_recent_history_by_type() {
+        let db = Database::open_memory().unwrap();
+        db.append_history(&make_history("192.168.1.1", "discovered")).unwrap();
+        db.append_history(&make_history("192.168.1.2", "discovered")).unwrap();
+        db.append_history(&make_history("192.168.1.1", "port_added")).unwrap();
+
+        let discovered = db.get_recent_history_by_type("discovered", 10).unwrap();
+        assert_eq!(discovered.len(), 2);
+        let port_added = db.get_recent_history_by_type("port_added", 10).unwrap();
+        assert_eq!(port_added.len(), 1);
+        let non_existent = db.get_recent_history_by_type("nonexistent", 10).unwrap();
+        assert!(non_existent.is_empty());
+    }
+
+    // ── Alert row parsing ──
+
+    #[test]
+    fn test_row_to_alert_parses_acknowledged() {
+        let db = Database::open_memory().unwrap();
+        let _alert = make_alert("192.168.1.1", "new_device", "test");
+        let id = db.create_alert(&_alert).unwrap();
+        let alerts = db.get_unacknowledged_alerts().unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].id, Some(id));
+        assert!(!alerts[0].acknowledged);
+    }
+
+    #[test]
+    fn test_list_alerts_with_ack_filter() {
+        let db = Database::open_memory().unwrap();
+        let a1 = make_alert("192.168.1.1", "new_device", "unacked");
+        let a2 = make_alert("192.168.1.2", "new_port", "acked");
+        let id1 = db.create_alert(&a1).unwrap();
+        let id2 = db.create_alert(&a2).unwrap();
+        db.acknowledge_alert(id2).unwrap();
+
+        let all = db.list_alerts(None, 100).unwrap();
+        assert_eq!(all.len(), 2);
+        let unacked = db.list_alerts(Some(false), 100).unwrap();
+        assert_eq!(unacked.len(), 1);
+        assert_eq!(unacked[0].message, "unacked");
+        let acked = db.list_alerts(Some(true), 100).unwrap();
+        assert_eq!(acked.len(), 1);
+        assert_eq!(acked[0].message, "acked");
+    }
+
+    // ── Config value CRUD ──
+
+    #[test]
+    fn test_get_config_value_missing() {
+        let db = Database::open_memory().unwrap();
+        assert_eq!(db.get_config_value("nonexistent").unwrap(), None);
+    }
+
+    #[test]
+    fn test_set_and_get_config_value() {
+        let db = Database::open_memory().unwrap();
+        db.set_config_value("test_key", "test_value").unwrap();
+        assert_eq!(db.get_config_value("test_key").unwrap(), Some("test_value".to_string()));
+    }
+
+    #[test]
+    fn test_set_config_value_overwrites() {
+        let db = Database::open_memory().unwrap();
+        db.set_config_value("key", "v1").unwrap();
+        db.set_config_value("key", "v2").unwrap();
+        assert_eq!(db.get_config_value("key").unwrap(), Some("v2".to_string()));
+    }
 }
