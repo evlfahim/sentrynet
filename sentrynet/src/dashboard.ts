@@ -736,46 +736,47 @@ function fillInput(id: string, value: string | number | boolean) {
   }
 }
 
-/** Read all settings from the form and return a patch object. */
+/** Read all settings from the form and return a patch object with snake_case keys
+ * that match the AppConfig struct in the Rust backend. */
 function readSettingsForm(): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
 
   const cidr = (document.getElementById('cfgCidr') as HTMLInputElement).value.trim();
-  if (cidr) patch.default_cidr = cidr;
+  if (cidr) patch['default_cidr'] = cidr;
 
-  const num = (id: string) => {
+  const num = (id: string, key: string) => {
     const el = document.getElementById(id) as HTMLInputElement | null;
     if (!el) return;
     const v = parseInt(el.value, 10);
-    if (!isNaN(v)) patch[id.replace('cfg', '').toLowerCase()] = v;
+    if (!isNaN(v)) patch[key] = v;
   };
-  num('ArpSettle');
-  num('PortTimeout');
-  num('PortConcurrency');
-  num('PortList');
-  num('PingCount');
-  num('PingTimeout');
-  num('HttpPort');
-  num('HttpTimeout');
-  num('AutoScan');
-  num('Retention');
+  num('ArpSettle', 'arp_settle_ms');
+  num('PortTimeout', 'port_scan_timeout_ms');
+  num('PortConcurrency', 'port_scan_concurrency');
+  num('PortList', 'port_scan_ports');
+  num('PingCount', 'ping_count');
+  num('PingTimeout', 'ping_timeout_ms');
+  num('HttpPort', 'http_port');
+  num('HttpTimeout', 'http_timeout_ms');
+  num('AutoScan', 'auto_scan_interval_seconds');
+  num('Retention', 'history_retention_days');
 
-  const chk = (id: string) => {
+  const chk = (id: string, key: string) => {
     const el = document.getElementById(id) as HTMLInputElement | null;
     if (!el) return;
-    patch[id.replace('cfg', '').toLowerCase()] = el.checked;
+    patch[key] = el.checked;
   };
-  chk('SvcDetect');
-  chk('Latency');
-  chk('Notify');
-  chk('AlertNewDevice');
-  chk('AlertNewPort');
-  chk('AlertDeviceOffline');
-  chk('AlertPortClosed');
+  chk('SvcDetect', 'port_service_detection');
+  chk('Latency', 'check_latency');
+  chk('Notify', 'enable_notifications');
+  chk('AlertNewDevice', 'alert_rules_new_device');
+  chk('AlertNewPort', 'alert_rules_new_port');
+  chk('AlertDeviceOffline', 'alert_rules_device_offline');
+  chk('AlertPortClosed', 'alert_rules_port_closed');
 
   // http_path is special — only send if non-empty
   const httpPath = (document.getElementById('cfgHttpPath') as HTMLInputElement).value.trim();
-  if (httpPath) patch.http_path = httpPath;
+  if (httpPath) patch['http_path'] = httpPath;
 
   return patch;
 }
