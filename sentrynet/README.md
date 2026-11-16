@@ -17,38 +17,40 @@ A cross-platform desktop application and local web dashboard for scanning your h
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    SentryNet App                      │
-├──────────────────┬───────────────────────────────────┤
-│  Desktop (Tauri) │       Web Dashboard               │
-│  ┌────────────┐  │   ┌─────────────────────────────┐ │
-│  │  Electron- │  │   │  Browser (any)              │ │
-│  │  like UI   │  │   │  └─────────────────────────┘ │
-│  └─────┬──────┘  │   ┌─────────────────────────────┐ │
-│        │         │   │  Local REST API (port 7357) │ │
-│  ┌─────▼──────┐  │   └─────────────┬───────────────┘ │
-│  │ Tauri Cmds │  │   │             │                 │
-│  └─────┬──────┘  │   │             │                 │
-│        │         │   │             │                 │
-│  ┌─────▼──────┐  │   │             │                 │
-│  │ Core Scan  │◄─┼───┼─────────────┤                 │
-│  │ Service    │  │   │             │                 │
-│  └─────┬──────┘  │   │             │                 │
-│        │         │   │             │                 │
-│  ┌─────▼──────┐  │   │             │                 │
-│  │ SQLite DB  │  │   │             │                 │
-│  └────────────┘  │   └───────────────────────────────┘ │
-├──────────────────┴───────────────────────────────────┤
-│  Rust Backend (Tauri v2)                             │
-│  ├── arp.rs          (ARP device discovery)           │
-│  ├── port_scan.rs    (TCP port scanning)              │
-│  ├── latency.rs      (ICMP + HTTP latency checks)     │
-│  ├── core.rs         (scan orchestration)             │
-│  ├── database.rs     (SQLite schema & queries)        │
-│  ├── alerts.rs       (alert detection & notifications)│
-│  ├── api.rs          (Tauri command handlers)         │
-│  └── rest_server.rs  (local HTTP API server)          │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        SentryNet App                              │
+├──────────────────┬───────────────────────────────────────────────┤
+│  Desktop (Tauri) │              Web Dashboard                    │
+│  ┌────────────┐  │   ┌─────────────────────────────────────────┐ │
+│  │  Tauri    │  │   │  Browser (any)                           │ │
+│  │  Webview  │  │   │  ──────────────────────────────────────  │ │
+│  └─────┬─────┘  │   └─────────────────────┬───────────────────┘ │
+│        │       │                         │                       │
+│  ┌─────▼─────┐  │   ┌─────────────────────▼───────────────────┐  │
+│  │ Tauri    │  │   │  Local REST API (127.0.0.1:7357)        │  │
+│  │ Commands │  │   │  (plain HTTP/1.1, no framework)          │  │
+│  └─────┬─────┘  │   └─────────────────────┬───────────────────┘  │
+│        │       │                         │                       │
+│  ┌─────▼─────┐  │   ┌─────────────────────▼───────────────────┐  │
+│  │ Core Scan │◄─┼───┤  Shared handler layer (api.rs)          │  │
+│  │ Service   │  │   └─────────────────────┬───────────────────┘  │
+│  └─────┬─────┘  │                         │                       │
+│        │       │   ┌─────────────────────▼───────────────────┐  │
+│  ┌─────▼─────┐  │   │  Background services                   │  │
+│  │ SQLite DB │  │   │  ├── CleanupScheduler (periodic)       │  │
+│  └───────────┘  │   │  └── Notification delivery             │  │
+├──────────────────┴───────────────────────────────────────────────┤
+│  Rust Backend (Tauri v2)                                         │
+│  ├── arp.rs          (ARP device discovery)                      │
+│  ├── port_scan.rs    (TCP port scanning)                         │
+│  ├── latency.rs      (ICMP + HTTP latency checks)                │
+│  ├── core.rs         (scan orchestration)                        │
+│  ├── database.rs     (SQLite schema & queries)                   │
+│  ├── alerts.rs       (alert detection & notifications)           │
+│  ├── api.rs          (Tauri command handlers + REST handlers)    │
+│  ├── rest_server.rs  (local HTTP API server)                     │
+│  └── cleanup.rs      (periodic history cleanup scheduler)        │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -141,48 +143,80 @@ The dashboard is fully functional without the desktop app. Browser notifications
 
 ### REST API
 
-The local server exposes these endpoints:
+The local server exposes these endpoints (all responses use the JSON envelope `{"success": true/false, "data": ..., "error": ...}`):
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/info` | Server info and status |
-| `POST` | `/api/scan` | Run a full LAN scan |
-| `POST` | `/api/scan/host` | Scan a single host |
-| `POST` | `/api/scan/ports` | Port scan hosts |
-| `POST` | `/api/scan/latency` | Latency check hosts |
+| `GET` | `/api` | Route list |
+| `GET` | `/api/health` | Liveness check (`{"status":"ok","version":"0.1.0"}`) |
+| `GET` | `/api/server_info` | Database path and REST URL |
+| `POST` | `/api/scan` | Run a full LAN scan (body: `ScanRequest`) |
+| `POST` | `/api/scan/host` | Scan a single host (body: `{host, ...ScanRequest}`) |
+| `POST` | `/api/scan/ports` | Ad-hoc TCP port scan (body: `PortScanRequest`) |
+| `POST` | `/api/scan/latency` | Ad-hoc latency check (body: `LatencyRequest`) |
 | `GET` | `/api/devices` | List all devices |
 | `GET` | `/api/devices/:ip` | Get device details |
 | `GET` | `/api/devices/:ip/ports` | Get device ports |
-| `GET` | `/api/ports` | List all ports |
-| `GET` | `/api/devices/:ip/history` | Device history |
-| `GET` | `/api/history` | Full history timeline |
-| `GET` | `/api/alerts` | List alerts |
-| `GET` | `/api/alerts?unacknowledged=true` | Unacknowledged alerts |
+| `GET` | `/api/devices/:ip/history` | Device history (`?limit=`) |
+| `GET` | `/api/devices/:ip/alerts` | Device alerts |
+| `GET` | `/api/ports` | List all open ports |
+| `GET` | `/api/history` | Full history timeline (`?limit=&event_type=`) |
+| `GET` | `/api/alerts` | List alerts (`?acknowledged=&limit=`) |
 | `POST` | `/api/alerts/:id/ack` | Acknowledge an alert |
 | `GET` | `/api/config` | Get scan configuration |
-| `PUT` | `/api/config` | Update configuration |
-| `GET` | `/api/stats` | Scan statistics |
-| `GET` | `/api/export/devices.json` | Export devices as JSON |
-| `GET` | `/api/export/ports.json` | Export ports as JSON |
-| `GET` | `/api/export/history.json` | Export history as JSON |
+| `PUT` | `/api/config` | Update configuration (partial allowed) |
+| `GET` | `/api/stats` | Scan statistics (device/port/alert/history counts) |
+| `GET` | `/api/export/devices` | Export devices as JSON |
 | `GET` | `/api/export/devices.csv` | Export devices as CSV |
+| `GET` | `/api/export/ports` | Export ports as JSON |
 | `GET` | `/api/export/ports.csv` | Export ports as CSV |
+| `GET` | `/api/export/history` | Export history as JSON (`?limit=`) |
 | `GET` | `/api/export/history.csv` | Export history as CSV |
-| `POST` | `/api/cleanup` | Delete old history/alerts |
-| `POST` | `/api/notifications/resend` | Resend pending alerts |
+| `POST` | `/api/cleanup` | Delete old history and acknowledged alerts |
+| `GET` | `/api/cleanup/status` | Cleanup scheduler status |
+| `GET` | `/api/notifications/unacknowledged` | Count of unacknowledged alerts |
+| `POST` | `/api/notifications/resend` | Re-send notifications for pending alerts |
 | `POST` | `/api/notifications/test` | Send a test notification |
+
+#### Example: Run a full scan
+
+```bash
+curl -X POST http://127.0.0.1:7357/api/scan \
+  -H 'Content-Type: application/json' \
+  -d '{"cidr": "192.168.1.0/24"}'
+```
+
+#### Example: List devices
+
+```bash
+curl http://127.0.0.1:7357/api/devices
+```
+
+#### Example: Acknowledge an alert
+
+```bash
+curl -X POST http://127.0.0.1:7357/api/alerts/1/ack
+```
+
+#### Example: Export devices as CSV
+
+```bash
+curl -o devices.csv http://127.0.0.1:7357/api/export/devices.csv
+```
 
 ### Tauri Commands
 
-The desktop app also exposes these Rust commands via Tauri's IPC:
+The desktop app also exposes these Rust commands via Tauri's IPC (invoked from the frontend with `invoke('command_name', ...)`):
 
-- `arpScan(cidr?, settleMs?)` — Discover active hosts
-- `tcpScan(hosts, ports?, timeoutMs?, concurrency?, serviceDetection?)` — Port scan
-- `checkLatency(hosts, pingCount?, pingTimeoutMs?, httpPort?, httpPath?, httpTimeoutMs?)` — Latency check
-- `fullScan(dbPath, ...)` — Full scan with database persistence and alerts
-- `scanSingleHost(dbPath, host, ...)` — Scan one host without ARP
+| Command | Parameters | Returns |
+|---------|-----------|---------|
+| `arpScan` | `cidr?`, `settleMs?` | `ArpEntry[]` |
+| `tcpScan` | `hosts`, `ports?`, `timeoutMs?`, `concurrency?`, `serviceDetection?` | `HostScanResult[]` |
+| `checkLatency` | `hosts`, `pingCount?`, `pingTimeoutMs?`, `httpPort?`, `httpPath?`, `httpTimeoutMs?` | `HostLatencyResult[]` |
+| `fullScan` | `dbPath`, `cidr?`, `arpSettleMs?`, `portScanTimeoutMs?`, `portScanConcurrency?`, `portServiceDetection?`, `pingCount?`, `pingTimeoutMs?`, `httpPort?`, `httpPath?`, `httpTimeoutMs?`, `checkLatency?` | `FullScanResult` |
+| `scanSingleHost` | `dbPath`, `host`, `portScanTimeoutMs?`, `portScanConcurrency?`, `portServiceDetection?`, `pingCount?`, `pingTimeoutMs?`, `httpPort?`, `httpPath?`, `httpTimeoutMs?`, `checkLatency?` | `ScannedDevice` |
 
-## Configuration
+### Configuration
 
 Edit settings in the Settings tab or via the REST API:
 
@@ -206,40 +240,166 @@ Key settings:
 | `http_path` | `/` | HTTP HEAD path |
 | `http_timeout_ms` | 2000 | HTTP HEAD timeout |
 | `check_latency` | true | Enable latency checks |
-| `history_retention_days` | 0 | History retention (0 = unlimited) |
+| `history_retention_days` | 90 | History retention (0 = unlimited) |
 | `enable_notifications` | true | Enable desktop/browser notifications |
 | `auto_scan_interval_seconds` | 0 | Auto-scan interval (0 = disabled) |
+| `cleanup_interval_seconds` | 21600 | Cleanup scheduler interval (0 = disabled) |
 
 Alert rules (checkboxes):
 
-- New device discovered
-- New open port
-- Device goes offline
-- Open port closes
+- **New device discovered** — fires when an IP has never been seen before, or when a known IP's MAC address changes
+- **New open port** — fires when a previously unseen port opens on a known device
+- **Device goes offline** — fires when a known device stops responding to ARP
+- **Open port closes** — fires when a previously open port is no longer detected
 
 ## Data Storage
 
 All data is stored in a local SQLite database at:
 
-- **Linux**: `~/.local/share/com.sentrynet.desktop/sentrynet.db`
-- **macOS**: `~/Library/Application Support/com.sentrynet.desktop/sentrynet.db`
-- **Windows**: `%APPDATA%\com.sentrynet.desktop\sentrynet.db`
+- **Linux**: `~/.local/share/com.sentrynet.desktop/sentrynet.sqlite`
+- **macOS**: `~/Library/Application Support/com.sentrynet.desktop/sentrynet.sqlite`
+- **Windows**: `%APPDATA%\com.sentrynet.desktop\sentrynet.sqlite`
+
+The database contains four tables:
+
+| Table | Description |
+|-------|-------------|
+| `devices` | One row per unique IP (mac, name, vendor, first/last seen) |
+| `ports` | One row per open port per device (port, protocol, state, service) |
+| `history` | Append-only log of state changes (discovered, disconnected, port_added, port_removed) |
+| `alerts` | Actionable notifications (new_device, new_port, device_offline, port_closed) |
+| `config` | Key-value store for application settings |
 
 ## Plugin Integration Architecture
 
-SentryNet is designed as a modular scanner with a clean separation between:
+SentryNet is designed as a modular scanner with a clean separation between layers. This makes it straightforward to add new scanner types, integrate with external monitoring systems, or embed the scanner library in another application.
 
-1. **Scanner modules** (`arp.rs`, `port_scan.rs`, `latency.rs`) — Pure functions that take options and return results. No I/O, no side effects.
-2. **Core service** (`core.rs`) — Orchestrates scanner modules, persists results to the database, and generates alerts.
-3. **API layer** (`api.rs`, `rest_server.rs`) — Exposes scanner functionality via Tauri commands and a local REST API.
-4. **Notification layer** (`alerts.rs`) — Pluggable notification system supporting desktop (Tauri) and browser notifications.
+### Layer Overview
 
-To add a new scanner module:
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Frontend (Tauri Webview / Browser)                         │
+│  └── invoke() / fetch() calls to api layer                  │
+├─────────────────────────────────────────────────────────────┤
+│  API Layer (api.rs)                                         │
+│  ├── Tauri command handlers (invoke handlers)               │
+│  ├── REST route handlers (rest_server.rs)                    │
+│  └── Shared business logic (handle_scan, handle_get_*)      │
+├─────────────────────────────────────────────────────────────┤
+│  Core Service (core.rs)                                     │
+│  ├── full_scan() — orchestrates ARP → ports → latency       │
+│  ├── scan_single_host() — scan one host without ARP         │
+│  └── Device classification (new / known / mac_changed)      │
+├─────────────────────────────────────────────────────────────┤
+│  Scanner Modules (pure functions, no I/O)                   │
+│  ├── arp.rs   — ArpScanOptions → ArpEntry[]                 │
+│  ├── port_scan.rs — TcpScanOptions → HostScanResult[]       │
+│  └── latency.rs — LatencyCheckOptions → HostLatencyResult[] │
+├─────────────────────────────────────────────────────────────┤
+│  Persistence (database.rs)                                  │
+│  └── SQLite CRUD for devices, ports, history, alerts, config│
+├─────────────────────────────────────────────────────────────┤
+│  Notifications (alerts.rs)                                  │
+│  ├── classify_device() — device status detection            │
+│  ├── plan_notifications() — alert → notification mapping    │
+│  ├── notify_alerts() — delivery via installed Notifier      │
+│  └── set_notifier() — pluggable delivery callback           │
+└─────────────────────────────────────────────────────────────┘
+```
 
-1. Create a new `.rs` file with a public function that takes options and returns a result.
-2. Add a `#[tauri::command]` wrapper in `lib.rs` or a handler in `api.rs`.
-3. Register the command in the `tauri::generate_handler![]` macro.
-4. Add a tab or section in `dashboard.ts` and `index.html`.
+### Adding a New Scanner Module
+
+1. **Create a new `.rs` file** in `src-tauri/src/` with a public function that takes options and returns a result:
+
+   ```rust
+   pub struct MyScanOptions {
+       pub hosts: Vec<String>,
+       // ... other options
+   }
+
+   pub struct MyScanResult {
+       pub host: String,
+       pub result: String,
+   }
+
+   pub fn my_scan(options: &MyScanOptions) -> Result<Vec<MyScanResult>, MyScanError> {
+       // Pure computation / network I/O
+       Ok(results)
+   }
+   ```
+
+2. **Add a Tauri command** in `src-tauri/src/lib.rs`:
+
+   ```rust
+   #[tauri::command]
+   async fn my_scan_cmd(hosts: Vec<String>) -> Result<Vec<MyScanResult>, String> {
+       let options = MyScanOptions { hosts };
+       tauri::async_runtime::spawn_blocking(move || my_scan(&options))
+           .await
+           .map_err(|e| e.to_string())?
+           .map_err(|e| e.to_string())
+   }
+   ```
+
+3. **Register the command** in the `tauri::generate_handler![]` macro in `lib.rs`.
+
+4. **Add a REST route** in `src-tauri/src/rest_server.rs` if you want web dashboard access.
+
+5. **Add a tab or section** in `src/index.html` and `src/dashboard.ts` for the UI.
+
+### Embedding the Scanner Library
+
+The Rust code is compiled as a static library (`crate-type = ["staticlib", "cdylib", "rlib"]`), so it can be linked from other Rust projects. The scanner modules (`arp.rs`, `port_scan.rs`, `latency.rs`) are pure functions with no global state — they can be called directly:
+
+```rust
+use sentrynet_lib::arp;
+use sentrynet_lib::port_scan;
+use sentrynet_lib::latency;
+
+fn main() {
+    let entries = arp::arp_scan(&arp::ArpScanOptions {
+        cidr: Some("192.168.1.0/24".into()),
+        probe: true,
+        settle: std::time::Duration::from_millis(1500),
+    }).unwrap();
+
+    let results = port_scan::tcp_scan(&port_scan::TcpScanOptions {
+        hosts: vec!["192.168.1.1".into()],
+        ports: vec![22, 80, 443],
+        timeout_ms: 3000,
+        concurrency: 100,
+        service_detection: true,
+    }).unwrap();
+}
+```
+
+### Pluggable Notifications
+
+The notification system uses a callback-based approach. Any code can install a notifier:
+
+```rust
+use sentrynet_lib::alerts;
+
+// Install a custom notifier
+alerts::set_notifier(Arc::new(|notification: &alerts::Notification| {
+    println!("{}: {}", notification.title, notification.body);
+    Ok(())
+}));
+
+// Later, alerts will be delivered through this callback
+```
+
+The desktop app installs a notifier backed by the Tauri notification plugin at startup. Without one (unit tests, headless use), delivery is a no-op.
+
+### Security
+
+The REST server binds to `127.0.0.1` by default, preventing remote access. It also:
+
+- **Rejects non-loopback `Host` headers** — DNS rebinding protection
+- **Validates `Origin` headers** — only allows `tauri://localhost`, `http://localhost`, `https://localhost`, and `http://127.0.0.1`
+- **Validates all host inputs** — rejects special characters, leading dashes, and overly long values
+- **Limits request body size** — 1 MB maximum
+- **Uses a scan lock** — only one database-writing scan runs at a time (409 Conflict if another is in progress)
 
 ## License
 

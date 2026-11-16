@@ -38,4 +38,4 @@ Node.js, TypeScript, Tauri, SQLite, Nmap
 - [x] 13. Configure Tauri build scripts and bundle the desktop application for target OS.
 - [x] 14. Test desktop app functionality, verify local web server access, and validate alert mechanisms.
 - [x] 15. Implement history cleanup job to archive or delete old records based on retention policy.
-- [ ] 16. Write README with setup instructions, usage guide, and plugin integration architecture note.
+- [x] 16. Write README with setup instructions, usage guide, and plugin integration architecture note.
