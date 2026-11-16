@@ -96,7 +96,7 @@ const WELL_KNOWN_SERVICES: &[(u16, &str)] = &[
 ];
 
 /// Default well-known ports to scan when no range is specified.
-const DEFAULT_PORTS: &[u16] = &[
+pub const DEFAULT_PORTS: &[u16] = &[
     21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 161, 389, 443, 445, 465, 514, 554, 587, 631,
     993, 995, 1723, 2049, 3306, 3389, 5060, 5432, 5900, 6379, 8080, 8443, 9200, 11211, 27017,
 ];
@@ -369,7 +369,7 @@ fn scan_port(
 // ──────────────────────────────────────────────
 
 /// Scan all ports on a single host.
-fn scan_host(host: &str, ports: &[u16], timeout_ms: u64, concurrency: usize, service_detection: bool) -> HostScanResult {
+pub fn scan_host(host: &str, ports: &[u16], timeout_ms: u64, concurrency: usize, service_detection: bool) -> HostScanResult {
     let start = Instant::now();
     let mut open_ports: Vec<PortResult> = Vec::new();
 
