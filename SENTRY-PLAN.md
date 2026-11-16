@@ -27,7 +27,7 @@ Node.js, TypeScript, Tauri, SQLite, Nmap
 - [x] 2. Create SQLite schema for devices, ports, history, and alerts with indexes for efficient querying.
 - [x] 3. Implement ARP scan function to discover active IPs, MAC addresses, and vendor names.
 - [x] 4. Implement TCP port scanner using Nmap or raw sockets to detect open ports and services.
-- [ ] 5. Implement latency checker using ICMP ping and HTTP HEAD requests for response times.
+- [x] 5. Implement latency checker using ICMP ping and HTTP HEAD requests for response times.
 - [ ] 6. Combine modules into a core scanner service that aggregates device data and updates the database.
 - [ ] 7. Build REST API endpoints for scanning, fetching device list, history, alerts, and configuration.
 - [ ] 8. Develop Web UI dashboard with device table, port details, latency graphs, and history timeline.
