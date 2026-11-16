@@ -152,6 +152,9 @@ impl Database {
     /// Open (or create) the database at the given path and run migrations.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let conn = Connection::open(path)?;
+        // The REST server and Tauri commands open their own connections to the
+        // same file; wait for a competing writer instead of failing immediately.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         Self::init(&conn)?;
         Ok(Self { conn })
     }
@@ -294,7 +297,7 @@ impl Database {
 
     /// Append a history record.
     pub fn append_history(&self, record: &HistoryRecord) -> Result<i64> {
-        let row_id = self.conn.execute(
+        self.conn.execute(
             "INSERT INTO history (device_ip, event_type, details, timestamp) \
              VALUES (?1, ?2, ?3, ?4)",
             params![
@@ -304,7 +307,7 @@ impl Database {
                 record.timestamp.to_rfc3339(),
             ],
         )?;
-        Ok(row_id as i64)
+        Ok(self.conn.last_insert_rowid())
     }
 
     /// Get history for a device, ordered by timestamp descending.
@@ -331,6 +334,18 @@ impl Database {
         Ok(records)
     }
 
+    /// Get the most recent N history records of one event type across all devices.
+    pub fn get_recent_history_by_type(&self, event_type: &str, limit: usize) -> Result<Vec<HistoryRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, device_ip, event_type, details, timestamp FROM history \
+             WHERE event_type = ?1 ORDER BY timestamp DESC LIMIT ?2",
+        )?;
+        let records = stmt
+            .query_map(params![event_type, limit as i64], |row| Self::row_to_history(row))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(records)
+    }
+
     /// Delete history older than the given cutoff.
     pub fn delete_old_history(&self, cutoff: &DateTime<Utc>) -> Result<usize> {
         self.conn.execute(
@@ -350,7 +365,7 @@ impl Database {
 
     /// Create an alert.
     pub fn create_alert(&self, alert: &Alert) -> Result<i64> {
-        let row_id = self.conn.execute(
+        self.conn.execute(
             "INSERT INTO alerts (device_ip, alert_type, message, acknowledged, created_at) \
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -361,7 +376,7 @@ impl Database {
                 alert.created_at.to_rfc3339(),
             ],
         )?;
-        Ok(row_id as i64)
+        Ok(self.conn.last_insert_rowid())
     }
 
     /// Get unacknowledged alerts.
@@ -372,6 +387,19 @@ impl Database {
         )?;
         let alerts = stmt
             .query_map(params![], |row| Self::row_to_alert(row))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(alerts)
+    }
+
+    /// List the most recent alerts, optionally filtered by acknowledged state.
+    pub fn list_alerts(&self, acknowledged: Option<bool>, limit: usize) -> Result<Vec<Alert>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, device_ip, alert_type, message, acknowledged, created_at FROM alerts \
+             WHERE (?1 IS NULL OR acknowledged = ?1) ORDER BY created_at DESC LIMIT ?2",
+        )?;
+        let ack: Option<i64> = acknowledged.map(|a| if a { 1 } else { 0 });
+        let alerts = stmt
+            .query_map(params![ack, limit as i64], |row| Self::row_to_alert(row))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(alerts)
     }

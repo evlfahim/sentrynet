@@ -7,8 +7,10 @@ pub mod core;
 pub mod database;
 pub mod latency;
 pub mod port_scan;
+pub mod rest_server;
 
 use std::time::Duration;
+use tauri::Manager;
 
 // ──────────────────────────────────────────────
 // Scanner commands
@@ -163,9 +165,49 @@ async fn scan_single_host(
     .map_err(|e| e.to_string())
 }
 
+/// Open the app database and start the local REST server.
+/// A REST start failure (e.g. port in use) is reported through
+/// `api_server_info` instead of aborting the desktop app.
+fn start_api(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let data_dir = app.path().app_data_dir()?;
+    std::fs::create_dir_all(&data_dir)?;
+    let db_path = data_dir
+        .join(api::DEFAULT_DB_FILE)
+        .to_string_lossy()
+        .into_owned();
+    // Create the schema up front so concurrent first requests don't race on it.
+    database::Database::open(&db_path)?;
+
+    let bind = std::env::var("SENTRYNET_API_ADDR")
+        .unwrap_or_else(|_| rest_server::DEFAULT_BIND_ADDR.to_string());
+    let (server, rest_url, rest_error) = match rest_server::RestServer::start(&bind, db_path.clone()) {
+        Ok(server) => {
+            let url = server.url();
+            println!("[sentrynet] REST API listening on {url}");
+            (Some(server), Some(url), None)
+        }
+        Err(e) => {
+            let msg = format!("could not start REST API on {bind}: {e}");
+            eprintln!("[sentrynet] {msg}");
+            (None, None, Some(msg))
+        }
+    };
+
+    app.manage(api::ApiServerState {
+        info: api::ApiServerInfo {
+            db_path,
+            rest_url,
+            rest_error,
+        },
+        server,
+    });
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| start_api(app))
         .invoke_handler(tauri::generate_handler![
             // Scanner commands
             arp_scan,
@@ -174,6 +216,7 @@ pub fn run() {
             full_scan,
             scan_single_host,
             // REST API commands
+            api::api_server_info,
             api::api_scan,
             api::api_scan_host,
             api::api_scan_ports,
