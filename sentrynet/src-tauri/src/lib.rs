@@ -3,6 +3,7 @@ pub use tauri;
 
 pub mod arp;
 pub mod database;
+pub mod port_scan;
 
 use std::time::Duration;
 
@@ -23,10 +24,32 @@ async fn arp_scan(
         .map_err(|e| e.to_string())
 }
 
+/// Scan TCP ports on one or more hosts.
+#[tauri::command]
+async fn tcp_scan(
+    hosts: Vec<String>,
+    ports: Option<Vec<u16>>,
+    timeout_ms: Option<u64>,
+    concurrency: Option<usize>,
+    service_detection: Option<bool>,
+) -> Result<Vec<port_scan::HostScanResult>, String> {
+    let options = port_scan::TcpScanOptions {
+        hosts,
+        ports: ports.unwrap_or_default(),
+        timeout_ms: timeout_ms.unwrap_or(port_scan::DEFAULT_SCAN_TIMEOUT_MS),
+        concurrency: concurrency.unwrap_or(port_scan::DEFAULT_CONCURRENCY),
+        service_detection: service_detection.unwrap_or(true),
+    };
+    tauri::async_runtime::spawn_blocking(move || port_scan::tcp_scan(&options))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![arp_scan])
+        .invoke_handler(tauri::generate_handler![arp_scan, tcp_scan])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
